@@ -18,37 +18,54 @@ def git(cwd, *args):
 def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, review_only=False):
     directory = root / scenario
     directory.mkdir()
+    source = directory / "source"
     repo = directory / "repo"
     remote = directory / "remote.git"
-    repo.mkdir()
-    git(repo, "init", "-qb", "main")
+    source.mkdir()
+    git(source, "init", "-qb", "main")
+    git(source, "config", "user.name", "Fixture")
+    git(source, "config", "user.email", "fixture@example.invalid")
+    git(source, "config", "commit.gpgsign", "false")
+    (source / "seed.py").write_text('VALUE = "base"\n')
+    shutil.copytree(ROOT / "adapters", source / "adapters")
+    git(source, "add", ".")
+    git(source, "commit", "-qm", "base")
+    base = git(source, "rev-parse", "HEAD")
+    git(source, "clone", "-q", "--bare", "--no-local", str(source), str(remote))
+    git(source, "clone", "-q", "--no-local", str(remote), str(repo))
     git(repo, "config", "user.name", "Fixture")
     git(repo, "config", "user.email", "fixture@example.invalid")
     git(repo, "config", "commit.gpgsign", "false")
-    (repo / "seed").write_text("base\n")
-    git(repo, "add", "seed")
-    git(repo, "commit", "-qm", "base")
-    base = git(repo, "rev-parse", "HEAD")
-    git(repo, "clone", "-q", "--bare", str(repo), str(remote))
     git(repo, "switch", "-qc", "feature")
     if review_only:
         (repo / "result.txt").write_text("correct\n")
         git(repo, "add", "result.txt")
         git(repo, "commit", "-qm", "review-only candidate")
     initial = git(repo, "rev-parse", "HEAD")
+    assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
+    if scenario == "dirty":
+        (repo / "user-file").write_text("preserve this file\n")
     brief = directory / "brief"
     brief.write_text("The result.txt output must be correct.\n")
     evidence = directory / "evidence"
     env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                NSTACK_REVIEW_TEST_SCENARIO=scenario)
+    env.pop("PYTHONDONTWRITEBYTECODE", None)
+    env.pop("PYTHONPYCACHEPREFIX", None)
     result = subprocess.run([
-        sys.executable, "-B", str(ROOT / "adapters/codex/review.py"), "--authorize-host",
+        sys.executable, "adapters/codex/review.py", "--authorize-host",
         "--repo", str(repo), "--base", base, "--brief", str(brief), "--evidence", str(evidence),
         "--max-remediations", str(budget), "--push", str(remote),
         *(["--review-only"] if review_only else []),
-        "--", sys.executable, "-c", f"raise SystemExit({0 if gated else 1})",
-    ], env=env, capture_output=True, text=True, timeout=30)
+        "--", sys.executable, "-c",
+        f"import seed; assert seed.VALUE == 'base'; raise SystemExit({0 if gated else 1})",
+    ], cwd=repo, env=env, capture_output=True, text=True, timeout=30)
     status = json.loads((evidence / "status.json").read_text())
+    assert not list(repo.rglob("__pycache__"))
+    assert git(repo, "status", "--porcelain", "--untracked-files=all") == (
+        "?? user-file" if scenario == "dirty" else ""
+    )
+    assert git(repo, "diff", "--name-only", base, "HEAD") in ("", "result.txt")
     remote_ref = git(repo, "ls-remote", "--refs", str(remote), "refs/heads/feature")
     if expectation:
         assert result.returncode == 1 and expectation in status["error"], (result, status)
@@ -98,5 +115,6 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "reroute", "reported a model reroute")
         exercise(root, fake_bin, "repeat", "same independent findings")
         exercise(root, fake_bin, "budget", "remediation budget exhausted", budget=0)
+        exercise(root, fake_bin, "dirty", "dirty checkout")
         exercise(root, fake_bin, "gate", "quality gate failed", gated=False)
     print("host review CLI: remediation, exact SHA push and fail-closed protocol cases verified")

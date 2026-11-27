@@ -75,6 +75,7 @@ class CodexAdapter:
             "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
             "-c", "sandbox_workspace_write.exclude_tmpdir_env_var=true",
             "-c", "sandbox_workspace_write.network_access=false",
+            "-c", 'shell_environment_policy.set.PYTHONDONTWRITEBYTECODE="1"',
             "-c", 'web_search="disabled"',
         ))
         with evidence.with_suffix(".stderr").open("xb") as errors:
@@ -154,7 +155,9 @@ class CodexAdapter:
         with self.server(cwd, evidence) as server:
             policy = {"type": "workspaceWrite", "writableRoots": [str(cwd), str(scratch)],
                       "networkAccess": False, "excludeTmpdirEnvVar": True, "excludeSlashTmp": True}
-            return self.command(server, cwd, argv, policy, env={"TMPDIR": str(scratch)})
+            return self.command(server, cwd, argv, policy, env={
+                "TMPDIR": str(scratch), "PYTHONDONTWRITEBYTECODE": "1",
+            })
 
     def run(self, cwd, role, prompt, evidence, *, schema=None):
         review = schema is not None

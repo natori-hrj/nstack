@@ -17,6 +17,8 @@ def notify(method, params):
     emit({"method": method, "params": params})
 
 
+assert os.environ.get("PYTHONDONTWRITEBYTECODE") == "1"
+assert 'shell_environment_policy.set.PYTHONDONTWRITEBYTECODE="1"' in sys.argv
 scenario = os.environ["NSTACK_REVIEW_TEST_SCENARIO"]
 cwd = Path.cwd()
 thread = uuid.uuid4().hex
@@ -49,7 +51,11 @@ for line in sys.stdin:
         else:
             assert policy["excludeSlashTmp"] and policy["excludeTmpdirEnvVar"]
             assert params["env"]["TMPDIR"] in policy["writableRoots"]
-            gate = subprocess.run(params["command"], cwd=params["cwd"], text=True, capture_output=True)
+            env = dict(os.environ)
+            env.pop("PYTHONDONTWRITEBYTECODE")
+            env.update(params["env"])
+            gate = subprocess.run(params["command"], cwd=params["cwd"], env=env,
+                                  text=True, capture_output=True)
             response = {"exitCode": gate.returncode, "stdout": gate.stdout, "stderr": gate.stderr}
     elif method == "thread/start":
         state = params
@@ -76,6 +82,8 @@ for line in sys.stdin:
         schema = params["outputSchema"]
         if schema is None:
             assert state["model"] == "gpt-6.2-sol" and state["sandbox"] == "workspace-write"
+            subprocess.run([sys.executable, "-c", "import seed; assert seed.VALUE == 'base'"],
+                           check=True)
             if "Fix demonstrated findings" in prompt:
                 assert "incorrect output" in prompt
                 target.write_text("correct\n")

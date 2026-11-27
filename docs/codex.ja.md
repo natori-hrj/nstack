@@ -51,7 +51,7 @@ CLI 0.172.0 のヘルプには管理 worktree 用の `--worktree` もありま�
 Python 3.11 以降、Git、Codex CLI 0.172.0 があり、Codex 認証済みの許可されたホストで一度実行します。専用のクリーンなフィーチャーチェックアウトと、観測できる受け入れ条件を含む依頼ファイルを使います。ホストは Codex の実行時状態を書き込め、通常のサンドボックスを起動できる必要があります。MCP サーバーを有効にしていない認証済み設定を使ってください。子プロセスではアプリ、プラグイン、フック、メモリ、Web 検索、ネイティブ委任を無効にします。サンドボックスは書き込みとネットワークを制限します。ファイルの読み取りまで分離する必要がある場合は、制限された専用ホストアカウントを使ってください。
 
 ```sh
-python3 -B adapters/codex/review.py --authorize-host \
+python3 adapters/codex/review.py --authorize-host \
   --repo /path/to/feature-checkout --base <基点SHA> \
   --brief /path/to/acceptance.md --evidence /path/to/new-private-directory \
   --implement-model gpt-6.2-sol --implement-effort medium \

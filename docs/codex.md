@@ -41,7 +41,7 @@ Native custom agents can select a configured model and return results to their p
 Run once from an authorized host with Python 3.11+, Git, Codex CLI 0.172.0, and an authenticated Codex account. Use an exclusive, clean feature checkout and a task brief containing observable acceptance criteria. The host must be able to write Codex's runtime state and start its normal sandbox. Use an authenticated orchestration configuration with no enabled MCP servers. Apps, plugins, hooks, memories, web search and native delegation are disabled for these child processes. The Codex sandbox restricts writes and network, and can allow reads outside the checkout. Use a separate restricted host account if you need stronger filesystem read isolation.
 
 ```sh
-python3 -B adapters/codex/review.py --authorize-host \
+python3 adapters/codex/review.py --authorize-host \
   --repo /path/to/feature-checkout --base <base-sha> \
   --brief /path/to/acceptance.md --evidence /path/to/new-private-directory \
   --implement-model gpt-6.2-sol --implement-effort medium \
