@@ -5,6 +5,7 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
+import sys
 from tempfile import TemporaryDirectory
 import tomllib
 
@@ -215,4 +216,6 @@ if __name__ == "__main__":
         verify_install(repo, directory, names)
         verify_roles(directory)
         verify_worktrees(repo, directory)
+    workflow = run(sys.executable, "-B", str(ROOT / "tests/review_workflow.py"), cwd=ROOT)
+    print(workflow.stdout.strip())
     print(f"{len(names)} skills discovered; install/upgrade/rollback, role preflight and isolated Git fixture verified")

@@ -33,3 +33,22 @@ For comparisons, record elapsed time, agent runs, reviews, human interventions, 
 Read the installed role TOML and check discovery in the intended scope. Through an app-server for the same account and client, request `model/list` with `includeHidden: true` and collect all pages into one `{"data": [...]}` JSON result. Run `python3 adapters/codex/check_role.py <installed-role.toml> < model-list.json`. For an inherited model, resolve it in the active session and pass `--inherited-model` and, if applicable, `--inherited-effort`. The catalog indicates advertised access; record a completed response separately when a live gate is required.
 
 Copy `adapters/codex/optional/nstack_security_daybreak.toml` to the agents directory only if you intend to use that route. Explicitly select it for an authorized defensive task and pass `--daybreak-selected` to preflight. Require `availableAccessPrograms.cyber` to advertise `daybreakBlue`. Select the program for that session with `--cyber-access-program daybreak_blue` if required by the client. Keep the global program default off. If the role, model or access is unavailable, stop dispatch and report the reason. Model substitutions require an explicit choice.
+
+## Automated independent review
+
+Native custom agents can select a configured model and return results to their parent. Their effective sandbox and approvals are inherited. Use that route when the parent already has the required read-only permissions. A single parent with a writable implementation scope cannot enforce a read-only child review. The host entrypoint uses separate native app-server processes and ephemeral threads for the writer and each reviewer.
+
+Run once from an authorized host with Python 3.11+, Git, Codex CLI 0.172.0, and an authenticated Codex account. Use an exclusive, clean feature checkout and a task brief containing observable acceptance criteria. The host must be able to write Codex's runtime state and start its normal sandbox. Use an authenticated orchestration configuration with no enabled MCP servers. Apps, plugins, hooks, memories, web search and native delegation are disabled for these child processes. The Codex sandbox restricts writes and network, and can allow reads outside the checkout. Use a separate restricted host account if you need stronger filesystem read isolation.
+
+```sh
+python3 -B adapters/codex/review.py --authorize-host \
+  --repo /path/to/feature-checkout --base <base-sha> \
+  --brief /path/to/acceptance.md --evidence /path/to/new-private-directory \
+  --implement-model gpt-6.2-sol --implement-effort medium \
+  --review-model gpt-6.2-astra --review-effort medium \
+  -- python3 tests/validate.py
+```
+
+Use `--review-only` to verify an existing clean commit. To publish an eligible normal feature-branch update, explicitly add `--push <remote>`. To also find or create a draft GitHub PR, specify `--github-repo <owner/repo> --pr-base <branch> --pr-title <title>`. The command requires a verified pass before remote delivery. It does not merge or release.
+
+The program checks authentication, advertised model and effort, and actual sandbox write denial. It checks effective thread settings before sending prompts and rejects reported model reroutes. A clean checkout of each candidate runs the supplied gate with its own scratch space. Review starts in a separate checkout and context. A structured verdict must identify the full SHA. Demonstrated findings run through at most two fresh remediation rounds. Gate failures, missing evidence, blocked verdicts, repeated findings and permission or authentication errors stop delivery. The private evidence directory contains per-candidate gate outputs, model and sandbox settings, thread/turn IDs, structured verdicts, available usage counts and delivery status. It can contain repository content and should stay outside Git.

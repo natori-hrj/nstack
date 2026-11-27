@@ -38,7 +38,7 @@ def stage(state, snapshot):
     with TemporaryDirectory(prefix="stage-", dir=state) as temporary:
         staged = Path(temporary) / "snapshot"
         shutil.copytree(ROOT / "skills", staged / "skills")
-        for name in ("adapters/codex", "docs", "examples/agents"):
+        for name in ("adapters", "docs", "examples/agents"):
             shutil.copytree(ROOT / name, staged / name)
         for name in ("LICENSE", "LICENSE-upstream", "README.md", "README.ja.md"):
             shutil.copy2(ROOT / name, staged / name)

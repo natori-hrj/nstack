@@ -43,3 +43,22 @@ CLI 0.172.0 のヘルプには管理 worktree 用の `--worktree` もありま�
 導入した TOML と、対象スコープでの検出を確認します。同じアカウントとクライアントの app-server で `includeHidden: true` を付けて `model/list` を取得し、全ページを `{"data": [...]}` にまとめます。`python3 adapters/codex/check_role.py <導入済みロール.toml> < model-list.json` を実行します。モデルが継承設定なら実セッションで解決し、`--inherited-model` と、該当する場合は `--inherited-effort` に渡します。モデル一覧は公示されたアクセスの証拠です。ライブゲートが必要な場合は、応答完了を別途記録します。
 
 `adapters/codex/optional/nstack_security_daybreak.toml` は利用する場合に agents ディレクトリへ配置します。許可された防御作業に明示的に選択し、事前確認に `--daybreak-selected` を付けます。`availableAccessPrograms.cyber` に `daybreakBlue` があることを確認します。クライアントが要求する場合は、そのセッションに `--cyber-access-program daybreak_blue` を指定します。グローバル既定は無効のままにします。ロール、モデル、アクセスが不足している場合は起動を停止し、理由を報告します。モデルの代替には明示的な選択が必要です。
+
+## 独立レビューの自動実行
+
+ネイティブサブエージェントは、設定済みモデルの選択と親への結果返却に対応します。実効サンドボックスと承認設定は親から継承します。親が読み取り専用ならこの方式を利用できます。書き込み可能な実装用の親では、レビューだけの読み取り専用を強制できないため、ホスト用コマンドはライターと各レビューを別のネイティブ app-server プロセスと一時スレッドで起動します。
+
+Python 3.11 以降、Git、Codex CLI 0.172.0 があり、Codex 認証済みの許可されたホストで一度実行します。専用のクリーンなフィーチャーチェックアウトと、観測できる受け入れ条件を含む依頼ファイルを使います。ホストは Codex の実行時状態を書き込め、通常のサンドボックスを起動できる必要があります。MCP サーバーを有効にしていない認証済み設定を使ってください。子プロセスではアプリ、プラグイン、フック、メモリ、Web 検索、ネイティブ委任を無効にします。サンドボックスは書き込みとネットワークを制限します。ファイルの読み取りまで分離する必要がある場合は、制限された専用ホストアカウントを使ってください。
+
+```sh
+python3 -B adapters/codex/review.py --authorize-host \
+  --repo /path/to/feature-checkout --base <基点SHA> \
+  --brief /path/to/acceptance.md --evidence /path/to/new-private-directory \
+  --implement-model gpt-6.2-sol --implement-effort medium \
+  --review-model gpt-6.2-astra --review-effort medium \
+  -- python3 tests/validate.py
+```
+
+既存コミットだけを検証する場合は `--review-only` を使います。フィーチャーブランチへ通常の push を行う場合は `--push <remote>` を明示します。ドラフト PR の確認・作成も行う場合は `--github-repo <owner/repo> --pr-base <branch> --pr-title <title>` を指定します。外部への納品には検証とレビューの合格が必要です。マージとリリースは対象外です。
+
+認証とモデル・推論強度の提示を確認し、実際に書き込みが拒否されるか検証します。プロンプト送信前に実効スレッド設定を比較し、モデルが切り替わった場合は停止します。各候補のゲートは専用の一時領域を持つクリーンなチェックアウトで実行します。レビューは別のチェックアウトとコンテキストで開始し、判定に完全な候補 SHA を要求します。実証された指摘の修正は最大2巡です。ゲート失敗、証跡不足、レビュー保留、指摘の再発、認証・権限エラーでは納品を止めます。候補別のゲート出力、モデルとサンドボックス設定、スレッド・ターン ID、構造化判定、取得できた使用量、納品状態を証跡ディレクトリに記録します。リポジトリの内容を含む場合があるため Git の管理外に置きます。
