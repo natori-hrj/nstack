@@ -6,6 +6,8 @@ import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +47,23 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
     if scenario == "dirty":
         (repo / "user-file").write_text("preserve this file\n")
+    destination = remote
+    if scenario == "success":
+        git(repo, "config", "push.followTags", "true")
+        git(repo, "tag", "-am", "unapproved tag", "unapproved", base)
+    if scenario == "rewritten":
+        destination = directory / "effective.git"
+        git(source, "clone", "-q", "--bare", str(source), str(destination))
+        git(repo, "config", f"url.{destination}.pushInsteadOf", str(remote))
+    if scenario == "detached-default":
+        git(remote, "update-ref", "--no-deref", "HEAD", base)
+        git(remote, "update-ref", "refs/remotes/origin/main", base)
+        git(remote, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+        assert "refs/remotes/origin/HEAD" in git(repo, "ls-remote", "--symref", str(remote), "HEAD")
+    if scenario in {"assume-unchanged", "skip-worktree"}:
+        git(repo, "update-index", f"--{scenario}", "seed.py")
+        (repo / "seed.py").write_text("concealed modification\n")
+        assert git(repo, "status", "--porcelain") == ""
     brief = directory / "brief"
     brief.write_text("The result.txt output must be correct.\n")
     evidence = directory / "evidence"
@@ -72,12 +91,23 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         "?? user-file" if scenario == "dirty" else ""
     )
     assert git(repo, "diff", "--name-only", base, "HEAD") in ("", "result.txt")
-    remote_ref = git(repo, "ls-remote", "--refs", str(remote), "refs/heads/feature")
+    remote_ref = git(repo, "ls-remote", "--refs", str(destination), "refs/heads/feature")
+    assert git(repo, "ls-remote", "--tags", str(destination)) == ""
+    if scenario == "rewritten":
+        assert git(repo, "ls-remote", "--refs", str(remote), "refs/heads/feature") == ""
     if expectation:
         assert result.returncode == 1 and expectation in status["error"], (result, status)
         assert remote_ref == ""
         if scenario in {"unauthenticated", "permission", "model", "mcp-forced", "gate-scratch", "wrong-policy"}:
             assert git(repo, "rev-parse", "HEAD") == base
+        if scenario == "review-only-changes":
+            review = json.loads((evidence / "0-review.json").read_text())
+            assert review["review"]["verdict"] == status["status"] == "changes_requested"
+            assert status["candidate"] == review["candidate"]
+            assert not list(evidence.glob("*-implementation.json"))
+        if scenario in {"assume-unchanged", "skip-worktree"}:
+            assert not (evidence / "request.json").exists()
+            assert (repo / "seed.py").read_text() == "concealed modification\n"
         if scenario == "repeat":
             assert not (evidence / "2-implementation.json").exists()
         return
@@ -103,6 +133,72 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     assert second["writeProbe"] == "write-denied 13"
     assert remote_ref.split() == [second["candidate"], "refs/heads/feature"]
     assert (repo / "result.txt").read_text() == "correct\n"
+
+
+def verify_pr_delivery(root):
+    sys.path.insert(0, str(ROOT / "adapters"))
+    import review_workflow
+
+    repo = root / "pr-repo"
+    repo.mkdir()
+    remote = root / "pr-remote.git"
+    git(repo, "init", "-qb", "main")
+    git(repo, "config", "user.name", "Fixture")
+    git(repo, "config", "user.email", "fixture@example.invalid")
+    git(repo, "config", "commit.gpgsign", "false")
+    for value in ("first", "unreviewed", "reviewed"):
+        (repo / value).write_text(value)
+        git(repo, "add", value)
+        git(repo, "commit", "-qm", value)
+        if value == "first":
+            git(repo, "switch", "-qc", "feature")
+    git(repo, "clone", "-q", "--bare", str(repo), str(remote))
+    git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
+    git(remote, "update-ref", "-d", "refs/heads/feature")
+    candidate = git(repo, "rev-parse", "HEAD")
+    reviewed_base = git(repo, "rev-parse", "HEAD^")
+    actual_base = git(repo, "rev-parse", "main")
+    args = SimpleNamespace(push=str(remote), github_repo="fixture/project",
+                           pr_base="main", pr_title="Fixture")
+    evidence = root / "pr-evidence"
+    evidence.mkdir()
+    # Simulate GitHub's API, using real Git refs and merge-base computation.
+    with patch.object(review_workflow, "delivery_target", return_value=(str(remote), ())):
+        try:
+            review_workflow.deliver(args, repo, reviewed_base, candidate, evidence)
+        except ValueError as error:
+            assert "PR diff does not match" in str(error)
+        else:
+            raise AssertionError("delivery accepted an unreviewed PR diff")
+        assert git(remote, "for-each-ref", "refs/heads/feature") == ""
+
+        real_run = subprocess.run
+        reported_base = reviewed_base
+
+        def gh(argv, **kwargs):
+            if argv[0] != "gh":
+                return real_run(argv, **kwargs)
+            if argv[2] == "list":
+                result = [{"isCrossRepository": False}]
+            else:
+                result = {"isCrossRepository": False, "headRefOid": candidate,
+                          "baseRefName": "main", "baseRefOid": reported_base, "url": "fixture-pr"}
+            return subprocess.CompletedProcess(argv, 0, json.dumps(result), "")
+
+        with patch.object(review_workflow.subprocess, "run", side_effect=gh):
+            try:
+                review_workflow.deliver(args, repo, actual_base, candidate, evidence)
+            except ValueError as error:
+                assert "PR diff does not match" in str(error)
+            else:
+                raise AssertionError("GitHub-reported diff was not verified")
+            assert not (evidence / "delivery.json").exists()
+            reported_base = actual_base
+            review_workflow.deliver(args, repo, actual_base, candidate, evidence)
+        record = json.loads((evidence / "delivery.json").read_text())
+        assert record["candidate"] == candidate and record["base"] == actual_base
+        assert record["pr"] == "fixture-pr"
+
 
 
 def verify_real_config(root):
@@ -143,6 +239,12 @@ if __name__ == "__main__":
         command.chmod(0o700)
         exercise(root, fake_bin, "success", None)
         exercise(root, fake_bin, "review-only", None, review_only=True)
+        exercise(root, fake_bin, "review-only-changes", "requested changes in review-only mode", review_only=True)
+        exercise(root, fake_bin, "rewritten", None)
+        exercise(root, fake_bin, "detached-default", "cannot verify a non-default remote branch")
+        exercise(root, fake_bin, "assume-unchanged", "checkout has index flags")
+        exercise(root, fake_bin, "skip-worktree", "checkout has index flags")
+        verify_pr_delivery(root)
         exercise(root, fake_bin, "unauthenticated", "no authenticated account")
         exercise(root, fake_bin, "model", "absent from the active model catalog")
         exercise(root, fake_bin, "permission", "permitted writing")

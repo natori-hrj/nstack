@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
 import time
+import uuid
 from typing import Protocol
 
 
@@ -60,9 +61,9 @@ def verdict(text, candidate):
     return value
 
 
-def git(cwd, *argv):
+def git(cwd, *argv, config=()):
     return subprocess.run(
-        ["git", "-C", str(cwd), *argv],
+        ["git", "-C", str(cwd), *config, *argv],
         text=True, capture_output=True, check=True,
     ).stdout.strip()
 
@@ -72,6 +73,9 @@ def head(cwd):
 
 
 def clean_at(cwd, sha):
+    entries = git(cwd, "ls-files", "-v", "-z").split("\0")
+    if any(entry and (entry[0].islower() or entry[0] == "S") for entry in entries):
+        raise ValueError(f"checkout has index flags that can hide tracked changes: {cwd}")
     if head(cwd) != sha or git(cwd, "status", "--porcelain", "--untracked-files=all"):
         raise ValueError(f"dirty checkout or changed candidate: {cwd}")
 
@@ -99,62 +103,122 @@ def write_json(path, value):
         target.write("\n")
 
 
+def remote_urls(repo, name, direction, config):
+    prefix = f"{name}\t"
+    suffix = f" ({direction})"
+    return [line[len(prefix):-len(suffix)]
+            for line in git(repo, "remote", "-v", config=config).splitlines()
+            if line.startswith(prefix) and line.endswith(suffix)]
+
+
 def delivery_target(args, repo):
-    remotes = git(repo, "remote").splitlines()
-    if args.push in remotes:
-        targets = git(repo, "remote", "get-url", "--push", "--all", args.push).splitlines()
-        if len(targets) != 1:
-            raise ValueError("delivery requires exactly one push destination")
-        target = targets[0]
-    else:
-        target = args.push
+    # Let Git apply its push URL resolution, even for a literal argument.
+    name = f"nstack-delivery-{uuid.uuid4().hex}"
+    known = args.push in git(repo, "remote").splitlines()
+    source = args.push if known else name
+    config = () if known else ("-c", f"remote.{name}.url={args.push}")
+    targets = remote_urls(repo, source, "push", config)
+    if len(targets) != 1 or not targets[0]:
+        raise ValueError("delivery requires exactly one push destination")
+    target = targets[0]
     if args.github_repo:
         github = re.fullmatch(r"(?:https://github[.]com/|git@github[.]com:|ssh://git@github[.]com/)([^?#]+)",
                               target, re.IGNORECASE)
         if not github or github[1].removesuffix(".git").casefold() != args.github_repo.casefold():
             raise ValueError("GitHub PR repository must match the Git push destination")
-    return target
+
+    # An explicit pushurl prevents a second pushInsteadOf rewrite. Reject a
+    # second insteadOf rewrite on either operation before contacting the remote.
+    config = ("-c", f"remote.{name}.url={target}", "-c", f"remote.{name}.pushurl={target}")
+    for direction in ("fetch", "push"):
+        urls = remote_urls(repo, name, direction, config)
+        if urls != [target]:
+            raise ValueError("Git would rewrite the pinned delivery destination")
+    return name, config
 
 
-def deliver(args, repo, candidate, evidence):
+def default_branch(repo, reply):
+    heads = [line.split("\t") for line in reply.splitlines() if line.endswith("\tHEAD")]
+    symbolic = [fields[0][5:] for fields in heads
+                if len(fields) == 2 and fields[0].startswith("ref: ")]
+    hashes = [fields[0] for fields in heads
+              if len(fields) == 2 and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", fields[0])]
+    if len(heads) != 2 or len(symbolic) != 1 or len(hashes) != 1 or not symbolic[0].startswith("refs/heads/"):
+        raise ValueError("cannot verify a non-default remote branch")
+    git(repo, "check-ref-format", symbolic[0])
+    return symbolic[0]
+
+
+def verify_pr_base(repo, base, candidate, actual):
+    if not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", actual):
+        raise ValueError("cannot verify PR base revision")
+    try:
+        merge_bases = git(repo, "merge-base", "--all", actual, candidate).splitlines()
+    except subprocess.CalledProcessError as error:
+        raise ValueError("cannot verify PR merge base; fetch the current base branch first") from error
+    if merge_bases != [base]:
+        raise ValueError("PR diff does not match the reviewed base and candidate")
+
+
+def deliver(args, repo, base, candidate, evidence):
     branch = git(repo, "symbolic-ref", "--short", "HEAD")
     if branch in ("main", "master", "trunk") or branch == args.pr_base:
         raise ValueError("delivery requires an isolated feature branch")
-    target = delivery_target(args, repo)
-    remote_head = git(repo, "ls-remote", "--symref", "--", target, "HEAD")
-    default = next((line for line in remote_head.splitlines() if line.startswith("ref: ")), "")
-    if not default or default.split()[1] == f"refs/heads/{branch}":
-        raise ValueError("cannot verify a non-default remote branch")
+    remote, config = delivery_target(args, repo)
     ref = f"refs/heads/{branch}"
+
+    def remote_ref(name):
+        fields = git(repo, "ls-remote", "--refs", "--", remote, name, config=config).split()
+        if len(fields) != 2 or fields[1] != name:
+            raise ValueError(f"cannot verify remote ref {name}")
+        return fields[0]
+
+    def check_base():
+        if args.pr_base:
+            verify_pr_base(repo, base, candidate, remote_ref(f"refs/heads/{args.pr_base}"))
+
+    remote_head = git(repo, "ls-remote", "--symref", "--", remote, "HEAD", config=config)
+    if default_branch(repo, remote_head) == ref:
+        raise ValueError("cannot verify a non-default remote branch")
+    check_base()
     clean_at(repo, candidate)
-    git(repo, "push", "--", args.push, f"{candidate}:{ref}")
-    if git(repo, "ls-remote", "--refs", "--", target, ref).split() != [candidate, ref]:
+    git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", "--", remote, f"{candidate}:{ref}", config=config)
+    if remote_ref(ref) != candidate:
         raise ValueError("remote SHA differs from reviewed candidate")
-    delivery = {"candidate": candidate, "ref": ref}
+    delivery = {"candidate": candidate, "base": base, "ref": ref}
     if args.pr_base:
         target = ["--repo", args.github_repo]
         existing = subprocess.run(
             ["gh", "pr", "list", *target, "--state", "open", "--head", branch,
-             "--base", args.pr_base, "--json", "url,headRefOid,headRepositoryOwner,isCrossRepository"],
+             "--base", args.pr_base, "--json", "isCrossRepository"],
             cwd=repo, capture_output=True, text=True, check=True,
         )
         matches = [pr for pr in json.loads(existing.stdout) if not pr["isCrossRepository"]]
+        check_base()
         if not matches:
-            body = f"Reviewed candidate: `{candidate}`\n\nIndependent review and quality gate passed."
             subprocess.run(
                 ["gh", "pr", "create", *target, "--draft", "--head", branch,
-                 "--base", args.pr_base, "--title", args.pr_title, "--body", body],
+                 "--base", args.pr_base, "--title", args.pr_title, "--body", ""],
                 cwd=repo, capture_output=True, text=True, check=True,
             )
         pr = subprocess.run(
-            ["gh", "pr", "view", branch, *target, "--json", "url,headRefOid,baseRefName,isCrossRepository"],
+            ["gh", "pr", "view", branch, *target,
+             "--json", "url,headRefOid,baseRefName,baseRefOid,isCrossRepository"],
             cwd=repo, capture_output=True, text=True, check=True,
         )
         data = json.loads(pr.stdout)
         if data["isCrossRepository"] or data["headRefOid"] != candidate or data["baseRefName"] != args.pr_base:
             raise ValueError("PR does not reference the reviewed candidate and requested base")
+        verify_pr_base(repo, base, candidate, data["baseRefOid"])
         delivery["pr"] = data["url"]
     write_json(evidence / "delivery.json", delivery)
+
+
+
+class ReviewChangesRequested(ValueError):
+    def __init__(self, candidate):
+        super().__init__("independent review requested changes in review-only mode")
+        self.candidate = candidate
 
 
 def execute(adapter: ReviewAdapter, args, repo, evidence):
@@ -240,10 +304,12 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
                        {"candidate": candidate, "base": base, **result, "review": review})
             if review["verdict"] == "pass":
                 if args.push:
-                    deliver(args, repo, candidate, evidence)
+                    deliver(args, repo, base, candidate, evidence)
                 return candidate
             if review["verdict"] == "blocked":
                 raise ValueError("independent review blocked this candidate")
+            if args.review_only:
+                raise ReviewChangesRequested(candidate)
             if review["findings"] == findings:
                 raise ValueError("same independent findings repeated after remediation")
             last, findings = candidate, review["findings"]
@@ -290,6 +356,10 @@ def main(adapter_factory):
     try:
         with exclusive_checkout(repo):
             candidate = execute(adapter_factory(args.timeout), args, repo, evidence)
+    except ReviewChangesRequested as error:
+        write_json(evidence / "status.json", {"status": "changes_requested", "candidate": error.candidate,
+                                             "error": str(error), "elapsedSeconds": time.monotonic() - elapsed})
+        parser.exit(1, f"{error} (evidence: {evidence})\n")
     except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
         write_json(evidence / "status.json", {"status": "blocked", "error": str(error),
                                              "elapsedSeconds": time.monotonic() - elapsed})

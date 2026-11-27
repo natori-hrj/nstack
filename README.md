@@ -16,7 +16,7 @@ An engineering toolkit for Codex, built on the foundations of pstack. nstack (na
 
 ### Install at user scope
 
-Run from this checkout. Use Python 3.11+ on a POSIX host. For an existing installation, read the migration guide before activation. Keep both MIT notices with redistributed copies.
+Run from this checkout. Use Python 3.11+ and PyYAML on a POSIX host. For an existing installation, read the migration guide before activation. Keep both MIT notices with redistributed copies.
 
 ```sh
 config_dir="${CODEX_HOME:-$HOME/.codex}"

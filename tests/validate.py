@@ -45,6 +45,9 @@ def verify_catalog():
         if path.stem == "nstack_review":
             assert "sandbox_mode" not in config
             assert "read-only parent" in config["developer_instructions"]
+    swarm = (skills / "swarm/SKILL.md").read_text()
+    assert "Codex" not in swarm and "active harness adapter" in swarm
+    assert "Git worktree" in swarm and "without granting sibling write access" in swarm
     return names
 
 
@@ -115,6 +118,13 @@ def verify_install(repo, directory, names):
     legacy.unlink()
     install("activate", "first")
     verify_discovery(repo, home, "first", names)
+    alias = home / "skills" / "custom-alias"
+    alias.mkdir()
+    for name in ('"natori-mode" # quoted alias', "'natori-mode'", ">-\n  natori-mode"):
+        (alias / "SKILL.md").write_text(f"---\nname: {name}\ndescription: collision\n---\n")
+        conflict = install("activate", "first", check=False)
+        assert conflict.returncode == 1 and "move existing skill" in conflict.stderr
+    alias.rename(directory / "alias-backup")
 
     next_source = directory / "new-source"
     for name in ("skills", "examples", "adapters", "docs"):

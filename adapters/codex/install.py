@@ -63,6 +63,24 @@ def installed_skills(skills, managed):
             yield path / "SKILL.md"
 
 
+def declared_name(path):
+    lines = path.read_text(encoding="utf-8-sig").splitlines()
+    if not lines or lines[0] != "---":
+        return None
+    try:
+        from yaml import safe_load, YAMLError
+    except ImportError as error:
+        raise ValueError("skill activation requires PyYAML") from error
+    try:
+        end = lines.index("---", 1)
+        frontmatter = safe_load("\n".join(lines[1:end]))
+    except (ValueError, YAMLError) as error:
+        raise ValueError(f"invalid skill frontmatter: {path}") from error
+    if isinstance(frontmatter, dict) and isinstance(frontmatter.get("name"), str):
+        return frontmatter["name"]
+    return None
+
+
 def activate(home, state, snapshot):
     if snapshot.is_symlink() or not (snapshot / "skills").is_dir():
         raise ValueError(f"stage snapshot {snapshot.name} first")
@@ -76,10 +94,10 @@ def activate(home, state, snapshot):
     elif current.exists():
         raise ValueError(f"unmanaged skill path: {current}")
 
-    names = {path.parent.name for path in (snapshot / "skills").glob("*/SKILL.md")}
+    names = {declared_name(path) or path.parent.name
+             for path in (snapshot / "skills").glob("*/SKILL.md")}
     for existing in installed_skills(skills, current):
-        declared = re.search(r"^name:[ 	]*(\S+)[ 	]*$", existing.read_text(), re.M)
-        if existing.parent.name in names or (declared and declared[1] in names):
+        if existing.parent.name in names or declared_name(existing) in names:
             raise ValueError(f"move existing skill out of discovery first: {existing}")
 
     skills.mkdir(exist_ok=True)

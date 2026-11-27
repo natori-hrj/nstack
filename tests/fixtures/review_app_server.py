@@ -110,7 +110,7 @@ for line in sys.stdin:
             sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd, text=True).strip()
             assert sha in prompt and re.fullmatch("[0-9a-f]{40}", sha)
             findings = []
-            if target.read_text() != "correct\n" or scenario == "repeat":
+            if target.read_text() != "correct\n" or scenario in {"repeat", "review-only-changes"}:
                 findings = [{"location": "result.txt", "evidence": "incorrect output",
                              "expected": "correct output", "impact": "wrong user-facing result"}]
             if scenario == "reroute":
