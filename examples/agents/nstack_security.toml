@@ -1,4 +1,4 @@
-name = "pstack_security"
+name = "nstack_security"
 description = "Implement defensive security changes and bug fixes. Preserve permissions and verify the security contract with safe checks."
 model = "gpt-daybreak-blue-latest"
 model_reasoning_effort = "medium"

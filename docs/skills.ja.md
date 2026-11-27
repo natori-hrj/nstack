@@ -10,14 +10,14 @@
 - **変更を理解する** — 影響する契約は `$blast-radius`、設計判断は `$architect`、繰り返す教訓の定着は `$reflect`。
 - **並行して進める** — 異なる独立タスクは `$swarm`、同じ課題に対する代替案の比較は `$arena`。後者は共通基準で比較し、採用パッチは運用者が選びます。
 - **提出に備える** — `$babysit` は既存 PR の最新 head を追い、マージ可能または阻害要因が判明するまで確認します。`$autopilot-stack` は複数候補を依存順に準備します。既存 PR には babysit プレイブックを使い、検証済み候補の引き渡しで止まります。
-- **セッションを管理する** — 導入確認は `$setup-pstack`、中断と引き継ぎは `$pause-safely`、再開は `$session-pickup`。
+- **セッションを管理する** — 導入確認は `$setup-nstack`、中断と引き継ぎは `$pause-safely`、再開は `$session-pickup`。
 
 ## ワークフロースキル
 
 | スキル | 使う場面と入力例 | 期待する成果と終了条件 |
 |---|---|---|
 | [natori-mode](../skills/natori-mode/SKILL.md) | 一般的な開発。 `$natori-mode 再試行で重複するインポートを修正し、結果を確認して` | 成果、受け入れチェック、選んだ手順の検証証拠。証拠と残る制約を記録したら終了。 |
-| [setup-pstack](../skills/setup-pstack/SKILL.md) | 初回起動やモデルの確認。 `$setup-pstack スキル検出とモデル割り当てを確認して` | 検出、モデル、推論強度、並列数を確認。要求したモデルとプロバイダーが確認した証拠を区別し、利用できない設定は明示的な選択を求める。 |
+| [setup-nstack](../skills/setup-nstack/SKILL.md) | 初回起動やモデルの確認。 `$setup-nstack スキル検出とモデル割り当てを確認して` | 検出、モデル、推論強度、並列数を確認。要求したモデルとプロバイダーが確認した証拠を区別し、利用できない設定は明示的な選択を求める。 |
 | [architect](../skills/architect/SKILL.md) | 重要な設計判断。 `$architect インポート検証を CLI 境界に移すべきか検討して` | 選んだ設計、トレードオフ、未解決の判断を記録。契約や範囲が変わる対立は判断を仰ぐ。 |
 | [swarm](../skills/swarm/SKILL.md) | 独立タスク。 `$swarm CSV パーサーの修正とログガイドの更新を別々に進めて` | 依存関係、重複、担当、起点、差分、テスト、阻害要因。書き込み担当を隔離し、必要なら直列で進める。統合と公開は運用者へ引き渡す。 |
 | [arena](../skills/arena/SKILL.md) | 同じ課題の代替案。 `$arena 引用符付きフィールドの解析方法を同じテストデータで二案比較して` | 合意した予算内で挙動、差分の大きさ、保守コストを比較。パッチ選択と worktree の片付けは運用者に委ねる。 |
@@ -54,21 +54,21 @@
 
 ## モデル・隔離・公開権限
 
-[設定例](../examples/agents/)では `pstack_implement` に Sol、許可された防御作業を担当する `pstack_security` に Daybreak Blue、`pstack_review` に Astra を割り当てます。モデルと推論強度は配置先の TOML、サブエージェント数は Codex の `[agents]` で設定します。独立して起動する CLI セッション数は運用者が制限します。Daybreak には承認済みアクセスと適切なプログラム指定が必要です。必須モデルが利用できなければ作業を止めます。独立レビューは読み取り専用の親か別の読み取り専用セッションで行います。[Codex アダプター](codex.md)
+[設定例](../examples/agents/)では `nstack_implement` に Sol、許可された防御作業を担当する `nstack_security` に Daybreak Blue、`nstack_review` に Astra を割り当てます。モデルと推論強度は配置先の TOML、サブエージェント数は Codex の `[agents]` で設定します。独立して起動する CLI セッション数は運用者が制限します。Daybreak には承認済みアクセスと適切なプログラム指定が必要です。必須モデルが利用できなければ作業を止めます。独立レビューは読み取り専用の親か別の読み取り専用セッションで行います。[Codex アダプター](codex.ja.md)
 
 並行する書き込み担当には別ブランチ、別 worktree、別 Codex セッションを割り当てます。実効サンドボックスを確認し、兄弟 worktree を書き込み範囲に含めないでください。GitHub への書き込み、公開、マージには運用者の明示的な許可が必要です。Cursor Cloud、Bugbot、Cursor Automations はアダプターの対象外です。
 
 ## その他のインストール方法
 
-プロジェクト限定の場合は、スキルを `.agents/skills/`、エージェント TOML を `.codex/agents/`、両方の MIT 通知を名前に `pstack-codex-` を付けてプロジェクトルートに配置します。
+プロジェクト限定の場合は、スキルを `.agents/skills/`、エージェント TOML を `.codex/agents/`、両方の MIT 通知を名前に `nstack-` を付けてプロジェクトルートに配置します。
 
 ネイティブプラグインとして導入するには、チェックアウトをローカルマーケットプレイスに登録します。チェックアウトをマーケットプレイスのルートにする場合は、以下を `.agents/plugins/marketplace.json` に保存します。
 
 ```json
 {
-  "name": "pstack-local",
+  "name": "nstack-local",
   "plugins": [{
-    "name": "pstack-codex",
+    "name": "nstack",
     "source": {"source": "local", "path": "./"},
     "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
     "category": "Productivity"
@@ -78,7 +78,7 @@
 
 ```sh
 codex plugin marketplace add /ローカルマーケットプレイスの絶対パス
-codex plugin add pstack-codex@pstack-local
+codex plugin add nstack@nstack-local
 ```
 
-プラグインはスキルを導入します。カスタムエージェント TOML は[クイックスタート](../README.ja.md)の手順で別途配置します。
+プラグインのスキルには名前空間が付きます。スキル選択画面で `$nstack:natori-mode` や `$nstack:setup-nstack` を選びます。カスタムエージェント TOML は[クイックスタート](../README.ja.md)の手順で別途配置します。

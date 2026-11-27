@@ -12,7 +12,7 @@ For a specific job, invoke its skill directly.
 - **Understand a change** — use `$blast-radius` to map affected contracts, `$architect` to settle a design decision, or `$reflect` to retain a recurring lesson.
 - **Run work in parallel** — use `$swarm` for different independent tasks with separate owners. Use `$arena` to compare alternative patches for the same task under identical criteria. In an arena the operator chooses the patch.
 - **Prepare delivery** — use `$babysit` to track the current head of an existing PR until merge-ready or blocked. Use `$autopilot-stack` to prepare multiple candidates in dependency order. It uses the babysit playbook for existing PRs and stops at handoff.
-- **Manage a session** — use `$setup-pstack` to check your installation, `$pause-safely` to stop and record state, and `$session-pickup` to recover it.
+- **Manage a session** — use `$setup-nstack` to check your installation, `$pause-safely` to stop and record state, and `$session-pickup` to recover it.
 
 ## Workflow skills
 
@@ -21,7 +21,7 @@ Each example is a prompt to enter in Codex. The last column describes the handof
 | Skill | When to use it and example | Expected result and stopping condition |
 |---|---|---|
 | [natori-mode](../skills/natori-mode/SKILL.md) | General engineering task. `$natori-mode Fix duplicate imports on retry and verify the result` | An outcome, an acceptance check, and evidence from the chosen workflow. Finish after recording evidence and limitations. |
-| [setup-pstack](../skills/setup-pstack/SKILL.md) | First run or routing check. `$setup-pstack Check skill discovery and confirm my model assignments` | Discovery, model, effort, and concurrency check. Record requested models separately from provider-confirmed evidence. Ask for an explicit choice if a route is unavailable. |
+| [setup-nstack](../skills/setup-nstack/SKILL.md) | First run or routing check. `$setup-nstack Check skill discovery and confirm my model assignments` | Discovery, model, effort, and concurrency check. Record requested models separately from provider-confirmed evidence. Ask for an explicit choice if a route is unavailable. |
 | [architect](../skills/architect/SKILL.md) | Consequential design choice. `$architect Should import validation move to the CLI boundary?` | Record the selected design, tradeoffs, and unresolved decisions. Escalate disagreement that changes contract or scope. |
 | [swarm](../skills/swarm/SKILL.md) | Independent tasks. `$swarm Fix the CSV parser and independently update the logging guide` | Record dependencies, overlap, owners, bases, diffs, tests, and blockers. Isolate writers or run serially when needed. Hand integration and publication to the operator. |
 | [arena](../skills/arena/SKILL.md) | Competing approaches to one task. `$arena Compare two ways to parse quoted fields against the same fixtures` | Compare behavior, patch size, and maintenance cost within the agreed budget. Hand patch selection and worktree cleanup to the operator. |
@@ -58,7 +58,7 @@ These are decision aids. Apply the relevant principle during a task and use the 
 
 ## Models, isolation, and publication
 
-The [example TOMLs](../examples/agents/) use `pstack_implement` with Sol, `pstack_security` with Daybreak Blue for authorized defensive work, and `pstack_review` with Astra. Configure model and reasoning effort in the installed TOMLs, and subagent concurrency through Codex’s `[agents]` settings. Independently launched CLI sessions need an operator-set limit. Daybreak requires approved access and the appropriate program selection. Stop if a mandatory model is unavailable. Use a read-only parent for the review agent or launch a separate read-only session. Consult the [Codex adapter](codex.md) for access and sandbox details.
+The [example TOMLs](../examples/agents/) use `nstack_implement` with Sol, `nstack_security` with Daybreak Blue for authorized defensive work, and `nstack_review` with Astra. Configure model and reasoning effort in the installed TOMLs, and subagent concurrency through Codex’s `[agents]` settings. Independently launched CLI sessions need an operator-set limit. Daybreak requires approved access and the appropriate program selection. Stop if a mandatory model is unavailable. Use a read-only parent for the review agent or launch a separate read-only session. Consult the [Codex adapter](codex.md) for access and sandbox details.
 
 Give each concurrent writer a separate branch, worktree, and Codex session. Worktree paths alone provide no write restrictions. Check the effective sandbox and leave sibling worktrees out of the writable scope. GitHub writes, publication, and merging require explicit operator authorization. Cursor Cloud, Bugbot, and Cursor Automations are outside the adapter’s scope.
 
@@ -70,9 +70,9 @@ For native plugin installation, register the checkout in a local marketplace. If
 
 ```json
 {
-  "name": "pstack-local",
+  "name": "nstack-local",
   "plugins": [{
-    "name": "pstack-codex",
+    "name": "nstack",
     "source": {"source": "local", "path": "./"},
     "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
     "category": "Productivity"
@@ -82,7 +82,7 @@ For native plugin installation, register the checkout in a local marketplace. If
 
 ```sh
 codex plugin marketplace add /absolute/path/to/local-marketplace
-codex plugin add pstack-codex@pstack-local
+codex plugin add nstack@nstack-local
 ```
 
-The plugin supplies skills. Install the custom agent TOMLs separately using the [quick-start instructions](../README.md).
+The plugin supplies namespaced skills. Pick `$nstack:natori-mode` or `$nstack:setup-nstack` in the skill picker. Install the custom agent TOMLs separately using the [quick-start instructions](../README.md).
