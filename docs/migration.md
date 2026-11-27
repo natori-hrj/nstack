@@ -1,4 +1,6 @@
-# Migrate from pstack-codex v0.1.0
+# Migration and rollback
+
+## From pstack-codex v0.1.0
 
 [日本語](migration.ja.md) · [Quick start](../README.md)
 
@@ -26,3 +28,11 @@ nstack replaces `$poteto-mode` with `$natori-mode`, `$setup-pstack` with `$setup
 ## Roll back
 
 Close Codex sessions. If the destination uses the nstack plugin, remove `nstack@nstack-local`. If the **original** setup used the old plugin, reinstall its recorded selector from the original marketplace, even when migrating to a direct install. Remove the new marketplace registration only if it was added for this migration and is unused. For a direct install, move the installed nstack skill directories out of discovery. In either case, move the new agent files and any new direct-install license files out of the way, then restore the backed-up files to their original paths. For a previously mixed install, restore the backed-up direct files as well. Reopen Codex, select the restored workflow and setup skills in the skill picker, and verify the restored model settings.
+
+## Upgrade to v0.3.0
+
+For a managed direct install, record the active target with `readlink "$config_dir/skills/nstack-managed"`. From a clean candidate checkout, use the [quick start](../README.md) to stage the new SHA. Staging leaves discovery and roles intact. Activate in a disposable Codex home first and verify discovery there. When ready, close existing sessions, activate in the intended home, and verify in a fresh session. To roll back, run `install.py --home "$config_dir" activate <previous-snapshot-id>` using the same script path as in the quick start. Snapshots retain both MIT notices and the role examples. Keep prior snapshots for rollback.
+
+For old direct copies, stage alongside the installation. After verifying the candidate in a disposable home, back up old skill directories by moving them out of all search paths, then activate the new snapshot. To roll back to the legacy layout, move the managed symlink out of discovery and restore the saved directories. For old plugins, preserve their source and selector, then disable them before activating direct skills. Restore their original selector for a plugin rollback.
+
+Manage agent TOMLs independently of skills. Inspect your existing `nstack_security` TOML, since v0.2.0 shipped a Daybreak assignment. Back it up before switching to the new standard example. Apply your intended custom model and effort settings separately. Restore the backup for role rollback. Check project and plugin scopes for duplicate skill and role names before activation.

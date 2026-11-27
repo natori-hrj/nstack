@@ -21,7 +21,7 @@ def git(cwd, *args):
 
 def verify_catalog():
     manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
-    assert manifest["name"] == "nstack" and manifest["version"] == "0.2.0"
+    assert manifest["name"] == "nstack" and manifest["version"] == "0.3.0"
     skills = ROOT / manifest["skills"]
     names = set()
     for path in skills.glob("*/SKILL.md"):
@@ -47,11 +47,7 @@ def verify_catalog():
     return names
 
 
-def verify_discovery(repo, directory, names):
-    home = directory / "home"
-    home.mkdir()
-    shutil.copytree(ROOT / "skills", home / "skills")
-    shutil.copytree(ROOT / "examples/agents", home / "agents")
+def verify_discovery(repo, home, snapshot, names):
     messages = [
         {"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "pstack-test", "version": "0.1"}}},
         {"method": "initialized"},
@@ -78,12 +74,102 @@ def verify_discovery(repo, directory, names):
                         break
                 else:
                     raise AssertionError("Codex response missing")
-            found = {skill["name"] for entry in response["result"]["data"]
-                     for skill in entry["skills"] if skill["enabled"]}
-            assert names <= found, names - found
-            assert {"poteto-mode", "setup-pstack"}.isdisjoint(found)
+            paths = {}
+            for entry in response["result"]["data"]:
+                for skill in entry["skills"]:
+                    if skill["enabled"]:
+                        paths.setdefault(skill["name"], []).append(Path(skill["path"]).resolve())
+            for name in names:
+                expected = home / "nstack" / "snapshots" / snapshot / "skills" / name / "SKILL.md"
+                assert paths.get(name) == [expected], (name, paths.get(name))
+            assert {"poteto-mode", "setup-pstack"}.isdisjoint(paths)
         finally:
             server.terminate()
+
+
+def verify_install(repo, directory, names):
+    home = directory / "codex-home"
+
+    def install(action, snapshot, source=ROOT, check=True):
+        return run("python3", str(source / "adapters/codex/install.py"), "--home",
+                   str(home), action, snapshot, cwd=repo, check=check)
+
+    legacy = home / "skills" / "natori-mode"
+    legacy.mkdir(parents=True)
+    old_text = "---\nname: natori-mode\ndescription: legacy\n---\n"
+    (legacy / "SKILL.md").write_text(old_text)
+    custom = home / "agents" / "nstack_implement.toml"
+    custom.parent.mkdir()
+    custom.write_text('name = "nstack_implement"\nmodel = "personal-model"\n')
+
+    install("stage", "first")
+    install("stage", "first")
+    conflict = install("activate", "first", check=False)
+    assert conflict.returncode == 1 and "move existing skill" in conflict.stderr
+    assert (legacy / "SKILL.md").read_text() == old_text
+    legacy.rename(directory / "legacy-backup")
+    legacy.symlink_to(directory / "legacy-backup", target_is_directory=True)
+    conflict = install("activate", "first", check=False)
+    assert conflict.returncode == 1 and "move existing skill" in conflict.stderr
+    legacy.unlink()
+    install("activate", "first")
+    verify_discovery(repo, home, "first", names)
+
+    next_source = directory / "new-source"
+    for name in ("skills", "examples", "adapters", "docs"):
+        shutil.copytree(ROOT / name, next_source / name)
+    for name in ("LICENSE", "LICENSE-upstream", "README.md", "README.ja.md"):
+        shutil.copy2(ROOT / name, next_source / name)
+    skill = "natori-mode/SKILL.md"
+    with (next_source / "skills" / skill).open("a") as changed:
+        changed.write("\nUpgrade marker.\n")
+    conflict = install("stage", "first", next_source, check=False)
+    assert conflict.returncode == 1 and "different files" in conflict.stderr
+    install("stage", "second", next_source)
+    live = home / "skills" / "nstack-managed" / skill
+    assert "Upgrade marker." not in live.read_text()
+    install("activate", "second")
+    verify_discovery(repo, home, "second", names)
+    assert "Upgrade marker." in live.read_text()
+    install("activate", "first")
+    verify_discovery(repo, home, "first", names)
+    assert "Upgrade marker." not in live.read_text()
+    assert custom.read_text() == 'name = "nstack_implement"\nmodel = "personal-model"\n'
+
+
+def verify_roles(directory):
+    adapter = ROOT / "adapters/codex"
+    standard = ROOT / "examples/agents/nstack_security.toml"
+    optional = adapter / "optional/nstack_security_daybreak.toml"
+    effort = [{"reasoningEffort": "medium"}]
+    normal = {"model": "gpt-6.2-sol", "supportedReasoningEfforts": effort}
+    special = {"model": "gpt-daybreak-blue-latest", "modelSpecialty": "cyber",
+               "hidden": True, "supportedReasoningEfforts": effort}
+
+    def check_role(role, entries, *args):
+        return subprocess.run(["python3", str(adapter / "check_role.py"), str(role), *args],
+                              input=json.dumps({"data": entries}), text=True, capture_output=True)
+
+    assert check_role(standard, [normal, special]).returncode == 0
+    missing = check_role(standard, [special])
+    assert missing.returncode == 1 and "absent" in missing.stderr
+    denied = check_role(optional, [normal, special], "--daybreak-selected")
+    assert denied.returncode == 1 and "does not advertise" in denied.stderr
+    special["availableAccessPrograms"] = {"cyber": ["daybreakBlue"]}
+    opt_in = check_role(optional, [normal, special])
+    assert opt_in.returncode == 1 and "explicitly select" in opt_in.stderr
+    enabled = check_role(optional, [normal, special], "--daybreak-selected")
+    assert enabled.returncode == 0 and "provider response unverified" in enabled.stdout
+
+    custom = directory / "personal-role.toml"
+    custom.write_text('name = "nstack_implement"\n')
+    personal = {"model": "custom-model", "supportedReasoningEfforts": effort}
+    result = check_role(custom, [personal], "--inherited-model", "custom-model",
+                        "--inherited-effort", "medium")
+    assert result.returncode == 0 and "custom-model advertised" in result.stdout
+    result = check_role(custom, [personal], "--inherited-model", "custom-model",
+                        "--inherited-effort", "high")
+    assert result.returncode == 1 and "reasoning effort high" in result.stderr
 
 
 def verify_worktrees(repo, directory):
@@ -126,6 +212,7 @@ if __name__ == "__main__":
         repo = directory / "repo"
         repo.mkdir()
         git(repo, "init", "-q")
-        verify_discovery(repo, directory, names)
+        verify_install(repo, directory, names)
+        verify_roles(directory)
         verify_worktrees(repo, directory)
-    print(f"{len(names)} skills discovered; isolated review and two local tasks verified")
+    print(f"{len(names)} skills discovered; install/upgrade/rollback, role preflight and isolated Git fixture verified")

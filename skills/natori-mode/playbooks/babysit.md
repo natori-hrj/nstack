@@ -1,3 +1,3 @@
 # babysit
 
-Track the exact PR head and inspect CI, conflicts and review evidence. Treat an unavailable service separately from a failing test. Retry only known transient failures within the agreed budget. Revalidate when the head changes. Stop at merge-ready or a concrete blocker. Obtain explicit authorization before any remote write, merge or publication.
+Track the exact current PR head SHA and inspect CI, conflicts and review evidence. Distinguish an unavailable service from a failing check. Retry transient failures within the agreed budget, or once in total if no budget is specified. Revalidate affected checks after the head changes. Apply the global review budget and delivery rules. Stop when the PR is ready to merge or a concrete blocker remains.

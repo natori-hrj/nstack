@@ -54,9 +54,9 @@
 
 ## モデル・隔離・公開権限
 
-[設定例](../examples/agents/)では `nstack_implement` に Sol、許可された防御作業を担当する `nstack_security` に Daybreak Blue、`nstack_review` に Astra を割り当てます。モデルと推論強度は配置先の TOML、サブエージェント数は Codex の `[agents]` で設定します。独立して起動する CLI セッション数は運用者が制限します。Daybreak には承認済みアクセスと適切なプログラム指定が必要です。必須モデルが利用できなければ作業を止めます。独立レビューは読み取り専用の親か別の読み取り専用セッションで行います。[Codex アダプター](codex.ja.md)
+[設定例](../examples/agents/)では `nstack_implement` に Sol、許可された防御作業を担当する `nstack_security` に Sol、`nstack_review` に Astra を割り当てます。モデルと推論強度は配置先の TOML、サブエージェント数は Codex の `[agents]` で設定します。独立して起動する CLI セッション数は運用者が制限します。Daybreak には承認済みアクセスと適切なプログラム指定が必要です。必須モデルが利用できなければ作業を止めます。独立レビューは読み取り専用の親か別の読み取り専用セッションで行います。[Codex アダプター](codex.ja.md)
 
-並行する書き込み担当には別ブランチ、別 worktree、別 Codex セッションを割り当てます。実効サンドボックスを確認し、兄弟 worktree を書き込み範囲に含めないでください。GitHub への書き込み、公開、マージには運用者の明示的な許可が必要です。Cursor Cloud、Bugbot、Cursor Automations はアダプターの対象外です。
+並行する書き込み担当には別ブランチ、別 worktree、別 Codex セッションを割り当てます。実効サンドボックスを確認し、兄弟 worktree を書き込み範囲に含めないでください。通常の GitHub 納品はリポジトリの権限に従います。リリース公開とマージは明示的な許可を得ます。Cursor Cloud、Bugbot、Cursor Automations はアダプターの対象外です。
 
 ## その他のインストール方法
 
