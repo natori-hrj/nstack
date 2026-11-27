@@ -47,6 +47,14 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     initial = git(repo, "rev-parse", "HEAD")
     if scenario == "review-first-detached":
         git(repo, "switch", "--detach", initial)
+    if scenario == "review-first-collision":
+        git(repo, "branch", "authorized-work")
+    if scenario == "remote-default":
+        git(repo, "push", str(remote), f"{base}:refs/heads/feature")
+        git(remote, "symbolic-ref", "HEAD", "refs/heads/feature")
+        git(repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+    if scenario == "delivery-mismatch":
+        git(repo, "push", str(remote), f"{base}:refs/heads/feature")
     assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
     if scenario == "dirty":
         (repo / "user-file").write_text("preserve this file\n")
@@ -79,11 +87,17 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
                NSTACK_REVIEW_TEST_SCENARIO=scenario)
     env.pop("PYTHONDONTWRITEBYTECODE", None)
     env.pop("PYTHONPYCACHEPREFIX", None)
+    local_only = {"review-first-detached", "review-first-no-auth", "local-no-auth"}
+    no_work = {"review-first-pass", "review-first-detached", "review-first-no-auth", "local-no-auth"}
     result = subprocess.run([
         sys.executable, "adapters/codex/review.py", "--authorize-host",
         "--repo", str(repo), "--base", base, "--brief", str(brief), "--evidence", str(evidence),
         "--max-remediations", str(budget),
-        *([] if scenario == "review-first-detached" else ["--push", str(remote)]),
+        *([] if scenario in no_work else ["--work-ref", "refs/heads/authorized-work"]),
+        *([] if scenario in local_only else [
+            "--push", "origin" if scenario == "destination-changed" else str(remote),
+            "--delivery-ref", "refs/heads/feature",
+        ]),
         *(["--review-only"] if review_only else []),
         *(["--review-first"] if review_first else []),
         "--", sys.executable, "-c",
@@ -102,7 +116,15 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         assert git(repo, "ls-remote", "--refs", str(remote), "refs/heads/feature") == ""
     if expectation:
         assert result.returncode == 1 and expectation in status["error"], (result, status)
-        assert remote_ref == ""
+        assert remote_ref == (f"{base}\trefs/heads/feature"
+                              if scenario in {"remote-default", "delivery-mismatch"} else "")
+        if scenario in {
+            "review-first-no-auth", "local-no-auth", "review-first-collision", "remote-default",
+            "detached-default", "delivery-mismatch", "writer-ref-changed", "destination-changed",
+        }:
+            assert git(repo, "rev-parse", "HEAD") == initial
+            if scenario not in {"writer-ref-changed", "destination-changed"}:
+                assert not list(evidence.glob("*-implementation.json"))
         if scenario in {"unauthenticated", "permission", "model", "mcp-forced", "gate-scratch", "wrong-policy"}:
             assert git(repo, "rev-parse", "HEAD") == base
         if scenario == "review-only-changes":
@@ -113,11 +135,28 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         if scenario in {"assume-unchanged", "skip-worktree"}:
             assert not (evidence / "request.json").exists()
             assert (repo / "seed.py").read_text() == "concealed modification\n"
-        if scenario in {"repeat", "review-first-repeat"}:
+        if scenario == "review-first-repeat":
+            first, second = [json.loads((evidence / f"{i}-review.json").read_text()) for i in (0, 1)]
+            assert first["candidate"] != second["candidate"]
+            assert list(first["newFindingIds"]) == ["F1", "F2"]
+            assert [p["id"] for p in second["review"]["previous"]] == ["F2", "F1"]
+            assert [p["status"] for p in second["review"]["previous"]] == ["resolved", "recurring"]
+            assert second["review"]["findings"] and second["base"] == first["base"]
+            assert second["candidate"] in second["review"]["previous"][1]["evidence"]
+            assert "1-review" in second["review"]["previous"][1]["evidence"]
+            assert json.loads(second["message"]) == second["review"]
+            assert git(repo, "rev-parse", "HEAD^") == initial
+        if scenario in {"review-first-missing", "review-first-unknown"}:
+            invalid = json.loads((evidence / "1-review.json").read_text())
+            assert invalid["candidate"] == git(repo, "rev-parse", "HEAD")
+            assert invalid["base"] == base and invalid["validationError"] and invalid["message"]
+        if scenario in {"repeat", "review-first-repeat", "review-first-uncertain",
+                        "review-first-missing", "review-first-unknown"}:
             assert not (evidence / "2-implementation.json").exists()
         if review_first:
             assert not (evidence / "0-implementation.json").exists()
-            if scenario not in {"review-first-repeat", "review-first-two-rounds"}:
+            if scenario not in {"review-first-repeat", "review-first-two-rounds", "review-first-uncertain",
+                                "review-first-missing", "review-first-unknown"}:
                 assert git(repo, "rev-parse", "HEAD") == initial
                 assert not list(evidence.glob("*-implementation.json"))
             if scenario == "review-first-two-rounds":
@@ -128,6 +167,8 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         return
 
     assert result.returncode == 0 and status["status"] == "pass", (result, status)
+    if scenario != "review-first-detached":
+        assert git(repo, "rev-parse", "refs/heads/feature") == initial
     preflight = json.loads((evidence / "preflight.json").read_text())
     assert preflight["disabledMcpServers"] == 1 and preflight["gateScratchWrite"]
     assert preflight["roles"][-1]["sandbox"] == "readOnly"
@@ -135,6 +176,7 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     if review_only or scenario in {"review-first-pass", "review-first-detached"}:
         assert not list(evidence.glob("*-implementation.json"))
         assert git(repo, "rev-parse", "HEAD") == initial
+        assert not git(repo, "for-each-ref", "refs/heads/authorized-work")
         assert json.loads(first["message"])["verdict"] == "pass"
         if scenario == "review-first-detached":
             assert remote_ref == ""
@@ -160,6 +202,7 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     assert second["writeProbe"] == "write-denied 13"
     assert remote_ref.split() == [second["candidate"], "refs/heads/feature"]
     assert (repo / "result.txt").read_text() == "correct\n"
+    assert git(repo, "symbolic-ref", "HEAD") == "refs/heads/authorized-work"
 
 
 def verify_pr_delivery(root):
@@ -179,89 +222,53 @@ def verify_pr_delivery(root):
         git(repo, "commit", "-qm", value)
         if value == "first":
             git(repo, "switch", "-qc", "123")
+        if value == "unreviewed":
+            git(repo, "switch", "-qc", "isolated")
     git(repo, "clone", "-q", "--bare", str(repo), str(remote))
     git(remote, "symbolic-ref", "HEAD", "refs/heads/main")
-    git(remote, "update-ref", "-d", "refs/heads/123")
     candidate = git(repo, "rev-parse", "HEAD")
-    reviewed_base = git(repo, "rev-parse", "HEAD^")
-    actual_base = git(repo, "rev-parse", "main")
-    args = SimpleNamespace(push=str(remote), github_repo="fixture/project",
-                           pr_base="main", pr_title="Fixture")
+    start = git(repo, "rev-parse", "HEAD^")
+    base = git(repo, "rev-parse", "main")
+    args = SimpleNamespace(push=str(remote), github_repo="fixture/project", delivery_ref="refs/heads/123",
+                           pr_base="main", pr_title=None, pr_number=456)
     evidence = root / "pr-evidence"
     evidence.mkdir()
-    # Simulate GitHub's API, using real Git refs and merge-base computation.
-    with patch.object(review_workflow, "delivery_target", return_value=(str(remote), (), "github.com/fixture/project")):
-        try:
-            review_workflow.deliver(args, repo, reviewed_base, candidate, evidence)
-        except ValueError as error:
-            assert "PR diff does not match" in str(error)
-        else:
-            raise AssertionError("delivery accepted an unreviewed PR diff")
-        assert git(remote, "for-each-ref", "refs/heads/123") == ""
+    reported_head = "another-branch"
+    view_calls = []
 
-        real_run = subprocess.run
-        reported_base = reviewed_base
+    def gh(cwd, github, *command):
+        assert cwd == repo and github == "github.com/fixture/project"
+        assert command[:2] == ("view", "456")
+        remote_tip = git(remote, "rev-parse", "refs/heads/123")
+        view_calls.append(remote_tip)
+        return json.dumps({"number": 456, "state": "OPEN", "isCrossRepository": False,
+                           "headRefName": reported_head, "headRefOid": remote_tip,
+                           "baseRefName": "main", "baseRefOid": base,
+                           "url": "https://github.com/fixture/project/pull/456"})
+
+    with (patch.object(review_workflow, "delivery_target") as target,
+          patch.object(review_workflow, "github_pr", side_effect=gh)):
+        target.side_effect = lambda args, repo, name: ((
+            "-c", f"remote.{name}.url={remote}", "-c", f"remote.{name}.pushurl={remote}",
+        ), "github.com/fixture/project")
+        for wrong_base, reason in ((start, "PR diff"), (base, "authorized branches")):
+            try:
+                review_workflow.Delivery(args, repo, wrong_base, start)
+            except ValueError as error:
+                assert reason in str(error)
+            else:
+                raise AssertionError("accepted a mismatched PR")
+            assert git(remote, "rev-parse", "refs/heads/123") == start
         reported_head = "123"
-        existing = [456]
-        creation_url = "https://github.com/fixture/project/pull/456"
-        commands = []
-
-        def gh(argv, **kwargs):
-            if argv[0] != "gh":
-                return real_run(argv, **kwargs)
-            assert argv[argv.index("--repo") + 1] == "github.com/fixture/project"
-            commands.append(argv[2])
-            if argv[2] == "list":
-                assert argv[argv.index("--head") + 1] == "123"
-                result = [{"number": number, "isCrossRepository": False} for number in existing]
-            elif argv[2] == "create":
-                assert argv[argv.index("--head") + 1] == "123"
-                return subprocess.CompletedProcess(argv, 0, creation_url + "\n", "")
-            else:
-                assert argv[2:4] == ["view", "456"]
-                result = {"number": 456, "isCrossRepository": False, "headRefOid": candidate,
-                          "headRefName": reported_head, "baseRefName": "main",
-                          "baseRefOid": reported_base, "url": creation_url}
-            return subprocess.CompletedProcess(argv, 0, json.dumps(result), "")
-
-        with patch.object(review_workflow.subprocess, "run", side_effect=gh):
-            try:
-                review_workflow.deliver(args, repo, actual_base, candidate, evidence)
-            except ValueError as error:
-                assert "PR diff does not match" in str(error)
-            else:
-                raise AssertionError("GitHub-reported diff was not verified")
-            assert not (evidence / "delivery.json").exists()
-            reported_base = actual_base
-            assert commands == ["list", "view"]
-            reported_head = "another-branch"
-            try:
-                review_workflow.deliver(args, repo, actual_base, candidate, evidence)
-            except ValueError as error:
-                assert "requested branches" in str(error)
-            else:
-                raise AssertionError("accepted a PR for a different head branch")
-            assert not (evidence / "delivery.json").exists()
-            reported_head = "123"
-            existing.clear()
-            commands.clear()
-            valid_url = creation_url
-            creation_url = "https://other.example.invalid/fixture/project/pull/456"
-            try:
-                review_workflow.deliver(args, repo, actual_base, candidate, evidence)
-            except ValueError as error:
-                assert "outside the verified repository" in str(error)
-            else:
-                raise AssertionError("accepted a PR URL for a different host")
-            assert commands == ["list", "create"]
-            assert not (evidence / "delivery.json").exists()
-            creation_url = valid_url
-            commands.clear()
-            review_workflow.deliver(args, repo, actual_base, candidate, evidence)
-            assert commands == ["list", "create", "view"]
-        record = json.loads((evidence / "delivery.json").read_text())
-        assert record["candidate"] == candidate and record["base"] == actual_base
-        assert record["pr"] == creation_url
+        delivery = review_workflow.Delivery(args, repo, base, start)
+        delivery.push(candidate, evidence)
+    assert git(repo, "symbolic-ref", "HEAD") == "refs/heads/isolated"
+    assert git(repo, "rev-parse", "refs/heads/123") == start
+    assert git(remote, "rev-parse", "refs/heads/123") == candidate
+    assert view_calls[-2:] == [start, candidate]
+    record = json.loads((evidence / "delivery.json").read_text())
+    assert record["candidate"] == candidate and record["base"] == base
+    assert record["pr"] == "https://github.com/fixture/project/pull/456"
 
 
 def verify_real_config(root):
@@ -305,7 +312,17 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "review-first-two-rounds", "remediation budget exhausted", review_first=True)
         exercise(root, fake_bin, "review-first-pass", None, review_first=True)
         exercise(root, fake_bin, "review-first-fix", None, review_first=True)
-        exercise(root, fake_bin, "review-first-repeat", "same independent findings", review_first=True)
+        exercise(root, fake_bin, "review-first-repeat", "recurs or remains uncertain", review_first=True)
+        exercise(root, fake_bin, "review-first-uncertain", "recurs or remains uncertain", review_first=True)
+        exercise(root, fake_bin, "review-first-unknown", "unexpected previous", review_first=True)
+        exercise(root, fake_bin, "review-first-missing", "assess every previous", review_first=True)
+        exercise(root, fake_bin, "review-first-no-auth", "explicit refs/heads/", review_first=True)
+        exercise(root, fake_bin, "review-first-collision", "work ref must be new", review_first=True)
+        exercise(root, fake_bin, "remote-default", "remote default", review_first=True)
+        exercise(root, fake_bin, "delivery-mismatch", "starting candidate", review_first=True)
+        exercise(root, fake_bin, "local-no-auth", "explicit refs/heads/")
+        exercise(root, fake_bin, "writer-ref-changed", "work ref or candidate changed")
+        exercise(root, fake_bin, "destination-changed", "effective delivery destination changed")
         exercise(root, fake_bin, "review-first-zero", "remediation budget exhausted", review_first=True, budget=0)
         exercise(root, fake_bin, "review-first-gate", "quality gate failed", review_first=True, gated=False)
         exercise(root, fake_bin, "review-first-blocked", "review blocked", review_first=True)
@@ -324,7 +341,7 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "wrong-policy", "unexpected sandbox policy")
         exercise(root, fake_bin, "sha", "does not match the candidate")
         exercise(root, fake_bin, "reroute", "reported a model reroute")
-        exercise(root, fake_bin, "repeat", "same independent findings")
+        exercise(root, fake_bin, "repeat", "recurs or remains uncertain")
         exercise(root, fake_bin, "budget", "remediation budget exhausted", budget=0)
         exercise(root, fake_bin, "dirty", "dirty checkout")
         exercise(root, fake_bin, "gate", "quality gate failed", gated=False)

@@ -42,6 +42,7 @@ Run once from an authorized host with Python 3.11+, Git, Codex CLI 0.172.0, and 
 
 ```sh
 python3 adapters/codex/review.py --authorize-host \
+  --work-ref refs/heads/nstack-work-example \
   --repo /path/to/feature-checkout --base <base-sha> \
   --brief /path/to/acceptance.md --evidence /path/to/new-private-directory \
   --implement-model gpt-6.2-sol --implement-effort medium \
@@ -49,7 +50,7 @@ python3 adapters/codex/review.py --authorize-host \
   -- python3 tests/validate.py
 ```
 
-Use `--review-only` to verify an existing clean commit. To publish an eligible normal feature-branch update, explicitly add `--push <remote>`. To also find or create a draft GitHub PR, specify `--github-repo <owner/repo> --pr-base <branch> --pr-title <title>`. The command requires a verified pass before remote delivery. It does not merge or release.
+Use `--review-only` to verify an existing clean commit. Authorize writes with `--work-ref refs/heads/<work>`, a new local ref created only when writes are needed. The starting ref is retained. To authorize delivery, explicitly pass `--push <remote> --delivery-ref refs/heads/<feature>`, distinct from the local work ref. To update an existing PR only, add `--github-repo <owner/repo> --pr-base <branch> --pr-number <number>`. Use `--pr-title <title>` instead of the number to authorize finding or creating a draft.
 
 Preflight checks effective settings, authentication, advertised model and effort, requested thread settings, actual review write denial, and the ability to write to the gate's dedicated scratch directory. It checks effective thread settings before sending prompts and rejects reported model reroutes. A clean checkout of each candidate runs the supplied gate with its own scratch space. Review starts in a separate checkout and context. A structured verdict must identify the full SHA. Demonstrated findings run through at most two fresh remediation rounds. Gate failures, missing evidence, blocked verdicts, repeated findings and permission or authentication errors stop delivery. The private evidence directory contains per-candidate gate outputs, model and sandbox settings, thread/turn IDs, structured verdicts, available usage counts and delivery status. It can contain repository content and should stay outside Git.
 
@@ -57,6 +58,6 @@ Delivery resolves one effective Git push destination and rejects an unverified r
 
 ## Review an existing candidate before editing
 
-Use `--review-first` from a clean checkout to run the quality gate and review its current commit. A pass leaves the checkout and commit intact. Demonstrated findings enable the writer on a feature branch, followed by the gate and independent review of the new SHA. The default maximum is two remediation rounds. Repeated finding sets stop remediation regardless of order. `--review-only` continues to report findings without editing. Explicit delivery options are honored only after a passing verdict for the actual candidate and base. PR operations use the verified github.com repository and the exact PR number discovered by search or returned by creation.
+Use `--review-first` from a clean checkout to gate and review its current commit. A first-pass approval creates no work branch. Before dispatching a writer, the controller checks the authorized work ref and, if delivery was requested, the effective remote default branch, delivery ref, starting SHA and PR. Fresh review assesses every previous finding ID as `resolved`, `recurring` or `uncertain` while independently discovering new defects. Recurrence, uncertainty and missing assessments stop further remediation. Because semantic matching can be imperfect, the hard maximum remains two rounds. Every review preserves its raw response and candidate/base SHA. Delivery rechecks the remote and PR before fast-forwarding; remote branch protections remain necessary for races at the server.
 
 An authenticated host run of the implementation-first workflow used a disposable repository with Sol and Astra at medium effort. The gate passed for `0069da1` and Astra requested changes. Sol remediated the finding, the gate passed for `47d2db8`, and a fresh read-only Astra session approved that SHA. Both reviews recorded write denial. The run took 54.1 seconds and the four turns reported 153,421 input tokens, 90,624 of them cached, and 1,335 output tokens. This is evidence for the fixture run on nstack `3cf2feb`.

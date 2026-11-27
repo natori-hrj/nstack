@@ -99,7 +99,12 @@ for line in sys.stdin:
             assert state["model"] == "gpt-6.2-sol" and state["sandbox"] == "workspace-write"
             subprocess.run([sys.executable, "-c", "import seed; assert seed.VALUE == 'base'"],
                            check=True)
-            if "Fix demonstrated findings" in prompt:
+            if scenario == "writer-ref-changed":
+                subprocess.run(["git", "switch", "-qc", "unexpected"], cwd=cwd, check=True)
+            elif scenario == "destination-changed":
+                subprocess.run(["git", "remote", "set-url", "origin", str(cwd / "unexpected.git")],
+                               cwd=cwd, check=True)
+            elif "Fix demonstrated findings" in prompt:
                 assert "incorrect output" in prompt
                 if scenario == "review-first-two-rounds" and target.read_text() == "correct\n":
                     target.write_text("incorrect-two\n")
@@ -113,22 +118,35 @@ for line in sys.stdin:
             assert "implementation transcript marker" not in prompt
             sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd, text=True).strip()
             assert sha in prompt and re.fullmatch("[0-9a-f]{40}", sha)
+            tracked = "previous" in schema["properties"]
+            registry = json.loads(prompt.split("Registry: ")[-1]) if tracked else {}
             findings = []
-            if target.read_text() != "correct\n" or scenario in {"repeat", "review-only-changes", "review-first-repeat", "review-first-two-rounds"}:
-                findings = [{"location": "result.txt", "evidence": "incorrect output",
+            previous = [{"id": key, "status": "resolved",
+                         "evidence": f"candidate {sha} checked at {cwd}/result.txt"}
+                        for key in reversed(registry)]
+            if registry and scenario in {"repeat", "review-first-repeat", "review-first-uncertain"}:
+                previous[-1]["status"] = "uncertain" if scenario.endswith("uncertain") else "recurring"
+            if registry and scenario == "review-first-unknown":
+                previous[-1]["id"] = "unknown"
+            if registry and scenario == "review-first-missing":
+                previous.pop()
+            if (target.read_text() != "correct\n" or scenario in
+                    {"review-only-changes", "review-first-two-rounds"}
+                    or (scenario == "review-first-repeat" and registry)):
+                findings = [{"location": f"{cwd}/result.txt", "evidence": f"incorrect output at {sha}",
                              "expected": "correct output", "impact": "wrong user-facing result"}]
-            if scenario == "review-first-two-rounds":
-                findings[0]["location"] = f"result.txt:{target.read_text().strip()}"
-            if scenario == "review-first-repeat":
-                findings.append({**findings[0], "location": "second-output"})
-                if target.read_text() == "correct\n":
-                    findings.reverse()
+                if scenario == "review-first-repeat" and not registry:
+                    findings.append({**findings[0], "location": "second-output"})
             if scenario == "reroute":
                 notify("model/rerouted", {**context, "toModel": "another-model"})
-            message = json.dumps({"candidate": "0" * 40 if scenario == "sha" else sha,
-                                  "verdict": ("blocked" if scenario == "review-first-blocked" else
-                                              "changes_requested" if findings else "pass"),
-                                  "findings": findings})
+            result = {"candidate": "0" * 40 if scenario == "sha" else sha,
+                      "verdict": ("blocked" if scenario == "review-first-blocked" else
+                                  "changes_requested" if findings or any(
+                                      p["status"] != "resolved" for p in previous) else "pass"),
+                      "findings": findings}
+            if tracked:
+                result["previous"] = previous
+            message = json.dumps(result)
         notify("item/completed", {**context, "item": {"type": "agentMessage", "text": message}})
         notify("thread/tokenUsage/updated", {**context, "tokenUsage": {"total": {"inputTokens": 10}}})
         notify("turn/completed", {**context, "turn": {"id": "turn", "status": "completed", "error": None}})
