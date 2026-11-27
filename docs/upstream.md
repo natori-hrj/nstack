@@ -1,24 +1,26 @@
-# 上流・ライセンス・同期
+# Upstream, licenses, and synchronization
 
-基盤は [cursor/plugins の pstack 0.15.48](https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/pstack)（`b7b93c36be9bcc36a74db438e0fd385d660bc559`）。`skills/principle-*/SKILL.md` の12件は上流の同名ファイルと同一です。その他のスキルとプレイブックは上流のワークフローに基づく Codex 向けの短縮実装です。上流の Claude Code アダプターと同様に、ホスト用語と機能を対応づけます。上流の生成スクリプト、フック、Bun ツール、PR watcher は同梱していません。
+[日本語](upstream.ja.md)
 
-## 比較
+nstack is an independent Codex adaptation of Lauren Tan (Poteto)’s [pstack 0.15.48](https://github.com/cursor/plugins/tree/b7b93c36be9bcc36a74db438e0fd385d660bc559/pstack), pinned at revision `b7b93c36be9bcc36a74db438e0fd385d660bc559`. The 12 principle `SKILL.md` files retain their original text. The other skills and playbooks are shortened Codex adaptations of upstream workflows. The adapter follows upstream’s Claude Code approach of mapping host terms and capabilities. Upstream generators, hooks, Bun tools, and the PR watcher are outside the distribution.
 
-固定 revision の公開アーカイブで README、マニフェスト、モデル・実行・検証の該当ファイルを比較しました。ポートのプログラムは実行していません。
+## Port comparison
 
-| ポート | 構成とトレードオフ |
+The public archives were inspected at the pinned revisions below. The comparison covered README files, manifests, model routing, execution, and validation. No port executables were run or incorporated.
+
+| Port | Design and tradeoffs |
 |---|---|
-| [nahuelb](https://github.com/nahuelb/pstack-codex/tree/121c6fb0c47135a02ef927f76da76a3dbf176ff1) | 上流ロックと互換性レポート、CLI マーケットプレイス、役割レジストリからカスタムエージェント設定を管理。ネイティブ並行実行、worktree 監査、head 単位の検証、インストール smoke がある。フックと Benny 自動化まで含む構成。 |
-| [atlys-hein](https://github.com/atlys-hein/pstack-codex/tree/b7bf49e08f756db153be29c6611bbb8d9d1136b5) | 上流 0.15.36 を基にしたインポート用パッケージ。役割・並行性はスキルの実行指示に記載し、Codex ホストが権限を制御。リソースマップ、ローカルチェックポイント、実行契約でファイル所有と親の検証を扱う。 |
-| [theomilll](https://github.com/theomilll/pstack-codex/tree/270c71fa27e0f5128a073424e3e6fe3042606555) | CLI マーケットプレイスと上流追従チェック。ネイティブサブエージェント、worktree 監査、独立検証を採用。モデルと推論強度は親の設定を継承。フックとヘルパーも含む。 |
-| [painhardcore](https://github.com/painhardcore/pstack/tree/af212355c0a8f21d2545f20042628f3911048a4f) | Codex、Claude Code、OpenCode を対象にしたパッチ同期方式。CLI マーケットプレイスと汎用 skills CLI。能力に応じた委任と直列フォールバック、プロジェクト検証スキル、配布ゲートを提供。モデルは原則継承。 |
-| [bemoat](https://github.com/bemoat/pstack/tree/dc8e617f179cf0bdc68b61e672f33e9eb64c20cf) | 複数ホスト向けの生成器、モデル設定と worktree・再開用ヘルパー、生成・同期・モデルのテストがある。Codex の導入はマーケットプレイス経由。対象ホストが増える分、生成・テスト・実行依存の保守範囲が広い。 |
+| [nahuelb](https://github.com/nahuelb/pstack-codex/tree/121c6fb0c47135a02ef927f76da76a3dbf176ff1) | Upstream lock, compatibility report, CLI marketplace, role registry, worktree audits, head-based checks, install smoke tests, hooks, and Benny automation. |
+| [atlys-hein](https://github.com/atlys-hein/pstack-codex/tree/b7bf49e08f756db153be29c6611bbb8d9d1136b5) | Import package based on upstream 0.15.36, with model and concurrency instructions, resource maps, local checkpoints, and host-enforced permissions. |
+| [theomilll](https://github.com/theomilll/pstack-codex/tree/270c71fa27e0f5128a073424e3e6fe3042606555) | CLI marketplace, upstream sync checks, native subagents, worktree audits, independent verification, and helpers. Model and reasoning effort follow the parent. |
+| [painhardcore](https://github.com/painhardcore/pstack/tree/af212355c0a8f21d2545f20042628f3911048a4f) | Patch-based sync for Codex, Claude Code, and OpenCode. Includes marketplace and skills CLI installation, serial fallback, and project verification skills. |
+| [bemoat](https://github.com/bemoat/pstack/tree/dc8e617f179cf0bdc68b61e672f33e9eb64c20cf) | Multi-host generator, model settings, worktree and resume helpers, and generator, sync, and model tests. Wider host support increases the maintenance surface. |
 
-5件とも pstack 部分のルートライセンスは MIT。bemoat は Lauren Tan に加えて Michael Denyer の著作権表示があり、別の Cursor Team Kit 用ライセンスも持ちます。この配布のコード採用元は上流 pstack です。上流の MIT 表示は [LICENSE-upstream](../LICENSE-upstream) に保持します。直接上流を起点にしたことで、複数の同期層やフックを保守せず、当配布の役割設定と公開権限を明示できます。
+The root license for the pstack portions of all five ports is MIT. bemoat also credits Michael Denyer and carries a separate Cursor Team Kit license. This distribution uses upstream pstack directly and preserves Lauren Tan’s copyright and permission notice in [LICENSE-upstream](../LICENSE-upstream).
 
-## 同期
+## Synchronize
 
-1. 上流の新しい SHA を確認し、現在の SHA と pstack、生成スクリプト、マニフェスト、ライセンスの差分を読む。
-2. 採用済み原則の更新を確認し、同じ相対パスから必要な原文を取り込む。手順の変更は該当 Codex スキルに限定して反映する。
-3. 追加の実行手段や外部接続が含まれる場合はコマンド、権限、対象、ライセンスを確認する。
-4. この文書の SHA、バージョン、変更した出典と必要な著作権表示を更新し、`python3 tests/validate.py` と関係する短い smoke を実行する。
+1. Compare the recorded revision with the new upstream SHA, including pstack, the generator, manifests, and licenses.
+2. Copy relevant updates to adopted principles from the same relative paths. Apply workflow changes only to the affected Codex skills.
+3. Inspect any new commands or external connections for permissions, destinations, and licensing.
+4. Update the provenance and notices, run `python3 tests/validate.py`, and smoke-test only the affected behavior.

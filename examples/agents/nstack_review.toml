@@ -1,4 +1,4 @@
-name = "pstack_review"
+name = "nstack_review"
 description = "Review code, architecture or adversarial assumptions. Apply interrogate evidence criteria. Launch only from a read-only parent session. Report demonstrated defects separately from improvements."
 model = "gpt-6.2-astra"
 model_reasoning_effort = "medium"

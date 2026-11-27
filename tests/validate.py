@@ -21,6 +21,7 @@ def git(cwd, *args):
 
 def verify_catalog():
     manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
+    assert manifest["name"] == "nstack" and manifest["version"] == "0.2.0"
     skills = ROOT / manifest["skills"]
     names = set()
     for path in skills.glob("*/SKILL.md"):
@@ -32,10 +33,15 @@ def verify_catalog():
         for relative in re.findall(r"\]\((\.\.?/[^)#]+)", text):
             assert (path.parent / relative).is_file(), (path, relative)
     assert len(names) == 26
+    assert {"natori-mode", "setup-nstack"} <= names
+    assert {"poteto-mode", "setup-pstack"}.isdisjoint(names)
+    assert {path.stem for path in (ROOT / "examples/agents").glob("*.toml")} == {
+        "nstack_implement", "nstack_security", "nstack_review",
+    }
     for path in (ROOT / "examples/agents").glob("*.toml"):
         config = tomllib.loads(path.read_text())
         assert config["name"] == path.stem and config["model"]
-        if path.stem == "pstack_review":
+        if path.stem == "nstack_review":
             assert "sandbox_mode" not in config
             assert "read-only parent" in config["developer_instructions"]
     return names
@@ -75,6 +81,7 @@ def verify_discovery(repo, directory, names):
             found = {skill["name"] for entry in response["result"]["data"]
                      for skill in entry["skills"] if skill["enabled"]}
             assert names <= found, names - found
+            assert {"poteto-mode", "setup-pstack"}.isdisjoint(found)
         finally:
             server.terminate()
 

@@ -1,4 +1,4 @@
-name = "pstack_implement"
+name = "nstack_implement"
 description = "Implement the assigned feature, refactoring, tests, documentation or general change. Verify the contract with focused checks."
 model = "gpt-6.2-sol"
 model_reasoning_effort = "medium"
