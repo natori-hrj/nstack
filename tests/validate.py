@@ -32,6 +32,7 @@ def verify_catalog():
         for relative in re.findall(r"\]\((\.\.?/[^)#]+)", text):
             assert (path.parent / relative).is_file(), (path, relative)
     assert len(names) == 26
+    assert "natori-mode" in names and "poteto-mode" not in names
     for path in (ROOT / "examples/agents").glob("*.toml"):
         config = tomllib.loads(path.read_text())
         assert config["name"] == path.stem and config["model"]
@@ -75,6 +76,7 @@ def verify_discovery(repo, directory, names):
             found = {skill["name"] for entry in response["result"]["data"]
                      for skill in entry["skills"] if skill["enabled"]}
             assert names <= found, names - found
+            assert "natori-mode" in found and "poteto-mode" not in found
         finally:
             server.terminate()
 

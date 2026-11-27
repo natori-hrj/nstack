@@ -1,10 +1,18 @@
 # pstack-codex
 
-Lauren Tan (Poteto) の pstack を Codex CLI で使う独立配布。既存の仕組みを活かし、短い作業単位を実行可能な証拠で検証します。
+[日本語](README.ja.md)
 
-## インストール
+An independent Codex CLI adaptation of Lauren Tan (Poteto)’s pstack. It includes 14 workflow skills, 12 engineering principles, and seven playbooks for evidence-based engineering.
 
-配布のチェックアウトで、内容を確認してから以下を実行します。既存の同名ファイルを上書きしない手順です。ユーザー全体に配置する例で、プロジェクト限定ならスキルを対象リポジトリの `.agents/skills/`、エージェントを `.codex/agents/`、両方のライセンスを `pstack-codex-` を付けた名前でリポジトリのルートに配置します。
+## Quick start
+
+1. Install the skills and agent files from a checkout using the commands below.
+2. Open a new `codex` session in your project. Run `$setup-pstack` to check discovery and review your model settings.
+3. Give `$natori-mode` a task with an observable outcome. For example, `$natori-mode Fix the duplicate rows when an import is retried. Show the failing and passing checks.`
+
+### Install at user scope
+
+Run from this checkout. Existing paths are skipped. Keep both MIT notices with redistributed copies.
 
 ```sh
 config_dir="${CODEX_HOME:-$HOME/.codex}"
@@ -21,51 +29,10 @@ for agent in examples/agents/*.toml; do
 done
 ```
 
-新しい Codex セッションで `$setup-pstack` を選択します。次のようにタスクを渡します。
+### Upgrading from v0.1.0
 
-- `$poteto-mode この集計の不具合を再現して、修正後の回帰チェックまで実行して`
-- `$interrogate この差分を独立レビューし、各指摘を再現して`
-- `$swarm 独立した2件を、担当と worktree を分けて検証して`
-- `$autopilot-stack 依存順に候補を準備し、公開前の品質ゲートで止めて`
+Install from a checkout containing `natori-mode`, then replace `$poteto-mode` in your prompts with `$natori-mode`. For direct installations, the copy commands skip existing paths. Update the four installed wrappers (`babysit`, `autopilot-stack`, `session-pickup`, `pause-safely`) from the new checkout so they point to the renamed playbooks. Back up local edits before replacing any files. Once verified, move the old installed `poteto-mode` directory outside your skills search paths and start a new session. For a plugin installation, update the plugin from the new source and start a new session.
 
-### ネイティブプラグインとして導入
+The example agents use Sol for implementation, Daybreak Blue for authorized defensive security, and Astra for independent review. The TOML files control model and reasoning effort. Publication and merging require explicit operator authorization.
 
-既存のローカルマーケットプレイスを使う場合は、対象チェックアウトをマーケットプレイス配下に置き、その `.agents/plugins/marketplace.json` にローカルソースとして登録します。以下はマーケットプレイスのルートに配布一式を置いた場合のマニフェスト例です。
-
-```json
-{
-  "name": "pstack-local",
-  "plugins": [{
-    "name": "pstack-codex",
-    "source": {"source": "local", "path": "./"},
-    "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
-    "category": "Productivity"
-  }]
-}
-```
-
-```sh
-codex plugin marketplace add /絶対パス/ローカルマーケットプレイス
-codex plugin add pstack-codex@pstack-local
-```
-
-プラグインはスキルを導入します。カスタムエージェントは上の TOML 配置手順を使います。再配布時は両方の MIT ライセンスを同梱してください。
-
-## モデルと並行実行
-
-| カスタムエージェント | 用途 | 設定例 |
-|---|---|---|
-| `pstack_implement` | 一般実装、機能、リファクタリング、テスト、文書 | `gpt-6.2-sol` |
-| `pstack_security` | 防御的なセキュリティ実装と修正 | `gpt-daybreak-blue-latest` |
-| `pstack_review` | コード、設計、反証のレビュー | `gpt-6.2-astra` |
-
-配置した各 TOML の `model` と `model_reasoning_effort` を編集できます。役割をさらに細分化する場合は別のファイル名と `name` で設定を複製します。モデルが利用できない場合は作業を止め、利用可能なモデルを明示的に選ぶか、`model` を削除して継承を選びます。並列数は既存の Codex 設定の `[agents]` に `max_threads = 3` と `max_depth = 1` を追加する例を出発点にできます。別 CLI プロセスで動く書き込み担当の並列数は運用者が制限します。
-
-## 構成
-
-- ワークフロー14件と原則12件。対象のプレイブックと関連原則を必要なときに読み込みます。
-- プレイブックは bug-fix、feature、refactoring、babysit、autopilot-stack、session-pickup、pause-safely。
-- Codex プラグイン用マニフェストは `.codex-plugin/plugin.json`。直接インストールとローカルマーケットプレイス経由の両方を検証済みです。
-- 検証は `python3 tests/validate.py`。Python 3.11+、Git、Codex CLI が必要です。配布自体の実行に追加ランタイムは不要です。
-
-[Codex アダプターと検証](docs/codex.md) · [上流・ポート比較・同期](docs/upstream.md) · [MIT](LICENSE) · [上流 MIT](LICENSE-upstream)
+[Skill reference, routing, and plugin installation](docs/skills.md) · [Codex compatibility](docs/codex.md) · [Upstream provenance](docs/upstream.md) · [MIT](LICENSE) · [Upstream MIT](LICENSE-upstream)

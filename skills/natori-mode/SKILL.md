@@ -1,5 +1,5 @@
 ---
-name: poteto-mode
+name: natori-mode
 description: Route a rigorous engineering task to one pstack workflow.
 ---
 
