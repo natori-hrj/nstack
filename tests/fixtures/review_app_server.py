@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import tomllib
 import uuid
 
 
@@ -21,6 +22,15 @@ assert os.environ.get("PYTHONDONTWRITEBYTECODE") == "1"
 assert 'shell_environment_policy.set.PYTHONDONTWRITEBYTECODE="1"' in sys.argv
 scenario = os.environ["NSTACK_REVIEW_TEST_SCENARIO"]
 cwd = Path.cwd()
+config_path = Path(os.environ["CODEX_HOME"]) / "config.toml"
+servers = tomllib.loads(config_path.read_text()).get("mcp_servers", {})
+for arg in sys.argv[1:]:
+    if arg.startswith("mcp_servers=") and scenario != "mcp-forced":
+        for name, settings in tomllib.loads(arg)["mcp_servers"].items():
+            servers[name].update(settings)
+features = {value: False for key, value in zip(sys.argv, sys.argv[1:]) if key == "--disable"}
+active = any(server.get("enabled", True) for server in servers.values())
+
 thread = uuid.uuid4().hex
 state = None
 
@@ -29,12 +39,14 @@ for line in sys.stdin:
     if "id" not in request:
         continue
     method, params = request["method"], request.get("params", {})
+    if method not in {"initialize", "config/read"}:
+        assert not active, "dispatch attempted before disabling MCP"
     if method == "initialize":
         response = {}
     elif method == "account/read":
         response = {"account": None if scenario == "unauthenticated" else {"type": "chatgpt"}}
     elif method == "config/read":
-        response = {"config": {"mcp_servers": {"external": {}}} if scenario == "mcp" else {}}
+        response = {"config": {"mcp_servers": servers, "features": features, "web_search": "disabled"}}
     elif method == "model/list":
         assert params["modelProvider"] == "openai"
         model = "gpt-6.2-sol" if params["cursor"] is None else "gpt-6.2-astra"
@@ -54,6 +66,8 @@ for line in sys.stdin:
             env = dict(os.environ)
             env.pop("PYTHONDONTWRITEBYTECODE")
             env.update(params["env"])
+            if scenario == "gate-scratch":
+                params["command"] = [sys.executable, "-c", "raise SystemExit(1)"]
             gate = subprocess.run(params["command"], cwd=params["cwd"], env=env,
                                   text=True, capture_output=True)
             response = {"exitCode": gate.returncode, "stdout": gate.stdout, "stderr": gate.stderr}

@@ -48,7 +48,12 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     brief = directory / "brief"
     brief.write_text("The result.txt output must be correct.\n")
     evidence = directory / "evidence"
-    env = dict(os.environ, PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
+    home = directory / "codex-home"
+    home.mkdir()
+    config = home / "config.toml"
+    original = '[mcp_servers."external.tool"]\ncommand = "false"\n'
+    config.write_text(original)
+    env = dict(os.environ, CODEX_HOME=str(home), PATH=f"{fake_bin}{os.pathsep}{os.environ['PATH']}",
                NSTACK_REVIEW_TEST_SCENARIO=scenario)
     env.pop("PYTHONDONTWRITEBYTECODE", None)
     env.pop("PYTHONPYCACHEPREFIX", None)
@@ -61,6 +66,7 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         f"import seed; assert seed.VALUE == 'base'; raise SystemExit({0 if gated else 1})",
     ], cwd=repo, env=env, capture_output=True, text=True, timeout=30)
     status = json.loads((evidence / "status.json").read_text())
+    assert config.read_text() == original
     assert not list(repo.rglob("__pycache__"))
     assert git(repo, "status", "--porcelain", "--untracked-files=all") == (
         "?? user-file" if scenario == "dirty" else ""
@@ -70,13 +76,16 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     if expectation:
         assert result.returncode == 1 and expectation in status["error"], (result, status)
         assert remote_ref == ""
-        if scenario in {"unauthenticated", "permission", "model", "mcp"}:
+        if scenario in {"unauthenticated", "permission", "model", "mcp-forced", "gate-scratch", "wrong-policy"}:
             assert git(repo, "rev-parse", "HEAD") == base
         if scenario == "repeat":
             assert not (evidence / "2-implementation.json").exists()
         return
 
     assert result.returncode == 0 and status["status"] == "pass", (result, status)
+    preflight = json.loads((evidence / "preflight.json").read_text())
+    assert preflight["disabledMcpServers"] == 1 and preflight["gateScratchWrite"]
+    assert preflight["roles"][-1]["sandbox"] == "readOnly"
     first = json.loads((evidence / "0-review.json").read_text())
     if review_only:
         assert not (evidence / "0-implementation.json").exists()
@@ -96,9 +105,37 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     assert (repo / "result.txt").read_text() == "correct\n"
 
 
+def verify_real_config(root):
+    home = root / "mcp-home"
+    home.mkdir()
+    config = home / "config.toml"
+    original = ('[mcp_servers.tool]\ncommand = "false"\n'
+                '[mcp_servers."tool.with.dot"]\ncommand = "false"\n'
+                '[mcp_servers.disabled]\ncommand = "false"\nenabled = false\n')
+    config.write_text(original)
+    probe = """
+from pathlib import Path
+from review_adapter import CodexAdapter, enabled_mcp
+cwd = Path.cwd()
+adapter = CodexAdapter(20)
+with adapter.connection(cwd, cwd / "normal") as server:
+    config = server.request("config/read", {"cwd": str(cwd)})["config"]
+    assert set(enabled_mcp(config)) == {"tool", "tool.with.dot"}
+with adapter.isolated(cwd, cwd / "isolated") as (server, count):
+    config = server.request("config/read", {"cwd": str(cwd)})["config"]
+    assert count == 2 and not enabled_mcp(config)
+    assert config["mcp_servers"]["tool.with.dot"]["command"] == "false"
+"""
+    subprocess.run([sys.executable, "-B", "-c", probe], cwd=root,
+                   env={**os.environ, "CODEX_HOME": str(home),
+                        "PYTHONPATH": str(ROOT / "adapters/codex")}, check=True)
+    assert config.read_text() == original
+
+
 if __name__ == "__main__":
     with TemporaryDirectory(prefix="nstack-review-test-") as temporary:
         root = Path(temporary)
+        verify_real_config(root)
         fake_bin = root / "bin"
         fake_bin.mkdir()
         command = fake_bin / "codex"
@@ -109,7 +146,8 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "unauthenticated", "no authenticated account")
         exercise(root, fake_bin, "model", "absent from the active model catalog")
         exercise(root, fake_bin, "permission", "permitted writing")
-        exercise(root, fake_bin, "mcp", "disable MCP servers")
+        exercise(root, fake_bin, "mcp-forced", "MCP overrides did not take effect")
+        exercise(root, fake_bin, "gate-scratch", "could not verify quality gate scratch writes")
         exercise(root, fake_bin, "wrong-policy", "unexpected sandbox policy")
         exercise(root, fake_bin, "sha", "does not match the candidate")
         exercise(root, fake_bin, "reroute", "reported a model reroute")

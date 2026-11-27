@@ -22,7 +22,7 @@ class Role:
 class ReviewAdapter(Protocol):
     name: str
 
-    def preflight(self, cwd: Path, roles: tuple[Role, ...], evidence: Path) -> str: ...
+    def preflight(self, cwd: Path, roles: tuple[Role, ...], evidence: Path) -> dict: ...
     def gate(self, cwd: Path, argv: list[str], scratch: Path, evidence: Path) -> dict: ...
     def run(self, cwd: Path, role: Role, prompt: str, evidence: Path, *,
             schema: dict | None = None) -> dict: ...
@@ -176,7 +176,7 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
         "maxRemediations": args.max_remediations,
     })
     probe = adapter.preflight(repo, roles, evidence / "preflight")
-    write_json(evidence / "preflight.json", {"writeProbe": probe})
+    write_json(evidence / "preflight.json", probe)
     last = start
     findings = None
     sessions = set()

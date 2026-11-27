@@ -8,10 +8,27 @@ import selectors
 import signal
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 import time
 import uuid
 
 from check_role import check
+
+
+DISABLED_FEATURES = ("apps", "plugins", "hooks", "memories", "multi_agent", "multi_agent_v2")
+
+
+def enabled_mcp(config):
+    return [name for name, settings in (config["mcp_servers"] or {}).items()
+            if settings.get("enabled", True)]
+
+
+def verify_config(config):
+    if enabled_mcp(config):
+        raise ValueError("Codex orchestration MCP overrides did not take effect")
+    if (any(config["features"].get(flag) is not False for flag in DISABLED_FEATURES)
+            or config["web_search"] != "disabled"):
+        raise ValueError("Codex orchestration feature overrides did not take effect")
 
 
 class AppServer:
@@ -66,10 +83,9 @@ class CodexAdapter:
         self.timeout = timeout
 
     @contextmanager
-    def server(self, cwd, evidence):
-        flags = ("apps", "plugins", "hooks", "memories", "multi_agent", "multi_agent_v2")
+    def connection(self, cwd, evidence, overrides=()):
         command = ["codex", "app-server"]
-        for flag in flags:
+        for flag in DISABLED_FEATURES:
             command.extend(("--disable", flag))
         command.extend((
             "-c", "sandbox_workspace_write.exclude_slash_tmp=true",
@@ -78,6 +94,7 @@ class CodexAdapter:
             "-c", 'shell_environment_policy.set.PYTHONDONTWRITEBYTECODE="1"',
             "-c", 'web_search="disabled"',
         ))
+        command.extend(overrides)
         with evidence.with_suffix(".stderr").open("xb") as errors:
             process = subprocess.Popen(command, cwd=cwd, stdin=subprocess.PIPE,
                                        stdout=subprocess.PIPE, stderr=errors,
@@ -86,12 +103,6 @@ class CodexAdapter:
                 server = AppServer(process, self.timeout)
                 server.request("initialize", {"clientInfo": {"name": "nstack-review", "version": "0.3.0"}})
                 server.send({"method": "initialized"})
-                account = server.request("account/read", {"refreshToken": False})
-                if not account.get("account"):
-                    raise ValueError("Codex has no authenticated account; use normal Codex login on the host")
-                config = server.request("config/read", {"cwd": str(cwd)})["config"]
-                if any(value.get("enabled", True) for value in (config.get("mcp_servers") or {}).values()):
-                    raise ValueError("disable MCP servers in the orchestration profile before dispatch")
                 yield server
             finally:
                 # Kill the private subprocess group, including any unfinished local commands.
@@ -102,6 +113,32 @@ class CodexAdapter:
                 process.wait()
                 process.stdin.close()
                 process.stdout.close()
+
+    @contextmanager
+    def isolated(self, cwd, evidence):
+        # Discovery does not start a thread, execute tools, or load MCP sessions.
+        with self.connection(cwd, evidence.with_name(evidence.name + "-config")) as server:
+            config = server.request("config/read", {"cwd": str(cwd)})["config"]
+            names = enabled_mcp(config)
+            if not names:
+                verify_config(config)
+                yield server, 0
+                return
+
+        # An inline table preserves literal names (including dots) across TOML layers.
+        entries = ", ".join(f"{json.dumps(name, ensure_ascii=False)} = {{ enabled = false }}"
+                            for name in sorted(names))
+        with self.connection(cwd, evidence, ("-c", f"mcp_servers={{ {entries} }}")) as server:
+            verify_config(server.request("config/read", {"cwd": str(cwd)})["config"])
+            yield server, len(names)
+
+    @contextmanager
+    def server(self, cwd, evidence):
+        with self.isolated(cwd, evidence) as (server, disabled_count):
+            account = server.request("account/read", {"refreshToken": False})
+            if not account.get("account"):
+                raise ValueError("Codex has no authenticated account; use normal Codex login on the host")
+            yield server, disabled_count
 
     def catalog(self, server):
         cursor = None
@@ -143,49 +180,73 @@ class CodexAdapter:
             raise ValueError("review sandbox permitted writing in the candidate checkout")
         expected = {f"write-denied {code}" for code in (errno.EACCES, errno.EPERM, errno.EROFS)}
         if result["exitCode"] != 0 or result["stdout"].strip() not in expected:
-            raise ValueError("could not verify review sandbox write denial")
+            raise ValueError(f"could not verify review sandbox write denial: {result['stderr'].strip()}")
         return result["stdout"].strip()
 
     def preflight(self, cwd, roles, evidence):
-        with self.server(cwd, evidence) as server:
+        with self.server(cwd, evidence) as (server, disabled_count):
             self.check_roles(server, roles)
-            return self.probe_read_only(server, cwd, {"type": "readOnly", "networkAccess": False})
+            states = [self.start_thread(server, cwd, role, role.name == "nstack_review")
+                      for role in roles]
+            review = states[-1]["sandbox"]
+            denial = self.probe_read_only(server, cwd, review)
+            with TemporaryDirectory(prefix="gate-probe-", dir=evidence.parent) as temporary:
+                scratch = Path(temporary)
+                target = scratch / "write-probe"
+                probe = self.gate_command(server, cwd, (
+                    sys.executable, "-c",
+                    "from pathlib import Path; import sys; Path(sys.argv[1]).touch()",
+                    str(target),
+                ), scratch)
+                if probe["exitCode"] != 0 or not target.is_file():
+                    raise ValueError(f"could not verify quality gate scratch writes: {probe['stderr'].strip()}")
+            return {"disabledMcpServers": disabled_count, "writeProbe": denial,
+                    "gateScratchWrite": True,
+                    "roles": [{"model": state["model"], "effort": state["reasoningEffort"],
+                               "sandbox": state["sandbox"]["type"]} for state in states]}
+
+    def gate_command(self, server, cwd, argv, scratch):
+        policy = {"type": "workspaceWrite", "writableRoots": [str(cwd), str(scratch)],
+                  "networkAccess": False, "excludeTmpdirEnvVar": True, "excludeSlashTmp": True}
+        return self.command(server, cwd, argv, policy, env={
+            "TMPDIR": str(scratch), "PYTHONDONTWRITEBYTECODE": "1",
+        })
 
     def gate(self, cwd, argv, scratch, evidence):
-        with self.server(cwd, evidence) as server:
-            policy = {"type": "workspaceWrite", "writableRoots": [str(cwd), str(scratch)],
-                      "networkAccess": False, "excludeTmpdirEnvVar": True, "excludeSlashTmp": True}
-            return self.command(server, cwd, argv, policy, env={
-                "TMPDIR": str(scratch), "PYTHONDONTWRITEBYTECODE": "1",
-            })
+        with self.server(cwd, evidence) as (server, _):
+            return self.gate_command(server, cwd, argv, scratch)
+
+    def start_thread(self, server, cwd, role, review):
+        mode = "read-only" if review else "workspace-write"
+        state = server.request("thread/start", {
+            "cwd": str(cwd), "model": role.model, "modelProvider": "openai",
+            "config": {"model_reasoning_effort": role.effort},
+            "approvalPolicy": "never", "sandbox": mode, "ephemeral": True,
+        })
+        thread = state["thread"]
+        policy = state["sandbox"]
+        if (state["model"] != role.model or state["reasoningEffort"] != role.effort
+                or state["modelProvider"] != "openai" or state["approvalPolicy"] != "never"
+                or Path(state["cwd"]).resolve() != cwd or thread["parentThreadId"]
+                or thread["forkedFromId"] or not thread["ephemeral"]):
+            raise ValueError("Codex returned unexpected model, context, or approval settings")
+        if policy["type"] != ("readOnly" if review else "workspaceWrite") or policy["networkAccess"]:
+            raise ValueError("Codex returned an unexpected sandbox policy")
+        if not review:
+            roots = {Path(root).resolve() for root in policy["writableRoots"]}
+            if roots - {cwd} or not policy["excludeTmpdirEnvVar"] or not policy["excludeSlashTmp"]:
+                raise ValueError("Codex implementation sandbox permits extra writable roots")
+        return state
 
     def run(self, cwd, role, prompt, evidence, *, schema=None):
         review = schema is not None
-        mode = "read-only" if review else "workspace-write"
-        with self.server(cwd, evidence) as server:
+        with self.server(cwd, evidence) as (server, _):
             self.check_roles(server, (role,))
-            state = server.request("thread/start", {
-                "cwd": str(cwd), "model": role.model, "modelProvider": "openai",
-                "config": {"model_reasoning_effort": role.effort},
-                "approvalPolicy": "never", "sandbox": mode, "ephemeral": True,
-            })
+            state = self.start_thread(server, cwd, role, review)
             thread = state["thread"]
             thread_id = thread["id"]
             policy = state["sandbox"]
-            if (state["model"] != role.model or state["reasoningEffort"] != role.effort
-                    or state["modelProvider"] != "openai" or state["approvalPolicy"] != "never"
-                    or Path(state["cwd"]).resolve() != cwd or thread["parentThreadId"]
-                    or thread["forkedFromId"] or not thread["ephemeral"]):
-                raise ValueError("Codex returned unexpected model, context, or approval settings")
-            if policy["type"] != ("readOnly" if review else "workspaceWrite") or policy["networkAccess"]:
-                raise ValueError("Codex returned an unexpected sandbox policy")
-            if review:
-                denial = self.probe_read_only(server, cwd, policy)
-            else:
-                roots = {Path(root).resolve() for root in policy["writableRoots"]}
-                if roots - {cwd} or not policy["excludeTmpdirEnvVar"] or not policy["excludeSlashTmp"]:
-                    raise ValueError("Codex implementation sandbox permits extra writable roots")
-                denial = None
+            denial = self.probe_read_only(server, cwd, policy) if review else None
 
             events = []
             turn = server.request("turn/start", {
