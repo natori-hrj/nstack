@@ -1,0 +1,7 @@
+{
+  "name": "pstack-codex",
+  "version": "0.1.0",
+  "description": "Evidence-based engineering workflows for Codex.",
+  "license": "MIT",
+  "skills": "./skills/"
+}
