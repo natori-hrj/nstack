@@ -121,11 +121,15 @@ def delivery_target(args, repo):
     if len(targets) != 1 or not targets[0]:
         raise ValueError("delivery requires exactly one push destination")
     target = targets[0]
+    github_repo = None
     if args.github_repo:
-        github = re.fullmatch(r"(?:https://github[.]com/|git@github[.]com:|ssh://git@github[.]com/)([^?#]+)",
-                              target, re.IGNORECASE)
+        github = re.fullmatch(
+            r"(?:https://github[.]com/|git@github[.]com:|ssh://git@github[.]com/)"
+            r"([a-z0-9-]+/[a-z0-9_.-]+)", target, re.IGNORECASE,
+        )
         if not github or github[1].removesuffix(".git").casefold() != args.github_repo.casefold():
             raise ValueError("GitHub PR repository must match the Git push destination")
+        github_repo = f"github.com/{github[1].removesuffix('.git')}"
 
     # An explicit pushurl prevents a second pushInsteadOf rewrite. Reject a
     # second insteadOf rewrite on either operation before contacting the remote.
@@ -134,7 +138,7 @@ def delivery_target(args, repo):
         urls = remote_urls(repo, name, direction, config)
         if urls != [target]:
             raise ValueError("Git would rewrite the pinned delivery destination")
-    return name, config
+    return name, config, github_repo
 
 
 def default_branch(repo, reply):
@@ -160,11 +164,25 @@ def verify_pr_base(repo, base, candidate, actual):
         raise ValueError("PR diff does not match the reviewed base and candidate")
 
 
+def github_pr(repo, github_repo, *args):
+    return subprocess.run(
+        ["gh", "pr", *args, "--repo", github_repo],
+        cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout.strip()
+
+
+def pr_number(url, github_repo):
+    match = re.fullmatch(rf"https://{re.escape(github_repo)}/pull/([1-9][0-9]*)", url, re.IGNORECASE)
+    if not match:
+        raise ValueError("GitHub returned a PR URL outside the verified repository")
+    return int(match[1])
+
+
 def deliver(args, repo, base, candidate, evidence):
     branch = git(repo, "symbolic-ref", "--short", "HEAD")
     if branch in ("main", "master", "trunk") or branch == args.pr_base:
         raise ValueError("delivery requires an isolated feature branch")
-    remote, config = delivery_target(args, repo)
+    remote, config, github_repo = delivery_target(args, repo)
     ref = f"refs/heads/{branch}"
 
     def remote_ref(name):
@@ -181,34 +199,32 @@ def deliver(args, repo, base, candidate, evidence):
     if default_branch(repo, remote_head) == ref:
         raise ValueError("cannot verify a non-default remote branch")
     check_base()
+    number = None
+    if github_repo:
+        existing = json.loads(github_pr(repo, github_repo, "list", "--state", "open", "--head", branch,
+                                        "--base", args.pr_base, "--json", "number,isCrossRepository"))
+        matches = [pr["number"] for pr in existing if not pr["isCrossRepository"]]
+        if len(matches) > 1 or any(type(item) is not int or item < 1 for item in matches):
+            raise ValueError("cannot identify a unique GitHub PR for the requested branch and base")
+        number = matches[0] if matches else None
+    check_base()
     clean_at(repo, candidate)
     git(repo, "push", "--no-follow-tags", "--recurse-submodules=no", "--", remote, f"{candidate}:{ref}", config=config)
     if remote_ref(ref) != candidate:
         raise ValueError("remote SHA differs from reviewed candidate")
     delivery = {"candidate": candidate, "base": base, "ref": ref}
-    if args.pr_base:
-        target = ["--repo", args.github_repo]
-        existing = subprocess.run(
-            ["gh", "pr", "list", *target, "--state", "open", "--head", branch,
-             "--base", args.pr_base, "--json", "isCrossRepository"],
-            cwd=repo, capture_output=True, text=True, check=True,
-        )
-        matches = [pr for pr in json.loads(existing.stdout) if not pr["isCrossRepository"]]
+    if github_repo:
         check_base()
-        if not matches:
-            subprocess.run(
-                ["gh", "pr", "create", *target, "--draft", "--head", branch,
-                 "--base", args.pr_base, "--title", args.pr_title, "--body", ""],
-                cwd=repo, capture_output=True, text=True, check=True,
-            )
-        pr = subprocess.run(
-            ["gh", "pr", "view", branch, *target,
-             "--json", "url,headRefOid,baseRefName,baseRefOid,isCrossRepository"],
-            cwd=repo, capture_output=True, text=True, check=True,
-        )
-        data = json.loads(pr.stdout)
-        if data["isCrossRepository"] or data["headRefOid"] != candidate or data["baseRefName"] != args.pr_base:
-            raise ValueError("PR does not reference the reviewed candidate and requested base")
+        if number is None:
+            url = github_pr(repo, github_repo, "create", "--draft", "--head", branch,
+                            "--base", args.pr_base, "--title", args.pr_title, "--body", "")
+            number = pr_number(url, github_repo)
+        data = json.loads(github_pr(repo, github_repo, "view", str(number), "--json",
+                                    "number,url,headRefName,headRefOid,baseRefName,baseRefOid,isCrossRepository"))
+        if (data["isCrossRepository"] or data["number"] != number
+                or pr_number(data["url"], github_repo) != number or data["headRefName"] != branch
+                or data["headRefOid"] != candidate or data["baseRefName"] != args.pr_base):
+            raise ValueError("PR does not reference the reviewed candidate and requested branches")
         verify_pr_base(repo, base, candidate, data["baseRefOid"])
         delivery["pr"] = data["url"]
     write_json(evidence / "delivery.json", delivery)
@@ -226,7 +242,7 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
     clean_at(repo, start)
     base = git(repo, "rev-parse", "--verify", "--end-of-options", f"{args.base}^{{commit}}")
     git(repo, "merge-base", "--is-ancestor", base, start)
-    if not args.review_only:
+    if not (args.review_only or args.review_first):
         git(repo, "symbolic-ref", "--short", "HEAD")
     task = args.brief.read_text().strip()
     if not task:
@@ -234,20 +250,25 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
     writer = Role("nstack_implement", args.implement_model, args.implement_effort)
     reviewer = Role("nstack_review", args.review_model, args.review_effort)
     roles = (reviewer,) if args.review_only else (writer, reviewer)
+    initial_roles = (reviewer,) if args.review_first else roles
     write_json(evidence / "request.json", {
         "adapter": adapter.name, "start": start, "base": base, "gate": args.gate,
-        "roles": [vars(role) for role in roles], "reviewOnly": args.review_only,
+        "roles": [vars(role) for role in roles],
+        "reviewOnly": args.review_only, "reviewFirst": args.review_first,
         "maxRemediations": args.max_remediations,
     })
-    probe = adapter.preflight(repo, roles, evidence / "preflight")
+    probe = adapter.preflight(repo, initial_roles, evidence / "preflight")
     write_json(evidence / "preflight.json", probe)
     last = start
     findings = None
+    seen_findings = set()
     sessions = set()
     with TemporaryDirectory(prefix="checkouts-", dir=evidence) as temporary:
         directory = Path(temporary)
         for attempt in range((0 if args.review_only else args.max_remediations) + 1):
-            if not args.review_only:
+            if not args.review_only and (findings is not None or not args.review_first):
+                if args.review_first:
+                    git(repo, "symbolic-ref", "--short", "HEAD")
                 prompt = (
                     f"Implement this task in the current feature checkout. Base: {base}.\n"
                     "Only edit task files. The caller owns Git commits, quality gates, and remote delivery. "
@@ -258,7 +279,7 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
                     prompt += f"\n\nFix demonstrated findings for {last}:\n{json.dumps(findings)}"
                 result = adapter.run(repo, writer, prompt, evidence / f"{attempt}-implementation")
                 sessions.add(result["session"])
-                write_json(evidence / f"{attempt}-implementation.json", {"start": last, **result})
+                write_json(evidence / f"{attempt}-implementation.json", {"start": last, "base": base, **result})
                 if head(repo) != last:
                     raise ValueError("implementation changed HEAD")
                 git(repo, "add", "-A")
@@ -275,7 +296,7 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
             scratch = directory / f"{attempt}-scratch"
             scratch.mkdir()
             gate = adapter.gate(gate_checkout, args.gate, scratch, evidence / f"{attempt}-gate")
-            write_json(evidence / f"{attempt}-gate.json", {"candidate": candidate, **gate})
+            write_json(evidence / f"{attempt}-gate.json", {"candidate": candidate, "base": base, **gate})
             clean_at(gate_checkout, candidate)
             if gate["exitCode"] != 0:
                 raise ValueError("candidate quality gate failed")
@@ -310,9 +331,12 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
                 raise ValueError("independent review blocked this candidate")
             if args.review_only:
                 raise ReviewChangesRequested(candidate)
-            if review["findings"] == findings:
+            findings = review["findings"]
+            signature = frozenset(tuple(item[field] for field in FINDING_FIELDS) for item in findings)
+            if signature in seen_findings:
                 raise ValueError("same independent findings repeated after remediation")
-            last, findings = candidate, review["findings"]
+            seen_findings.add(signature)
+            last = candidate
     raise ValueError("independent review remediation budget exhausted")
 
 
@@ -324,7 +348,10 @@ def main(adapter_factory):
     parser.add_argument("--base", required=True, help="Candidate comparison revision")
     parser.add_argument("--brief", type=Path, required=True)
     parser.add_argument("--evidence", type=Path, required=True, help="New directory outside checkout")
-    parser.add_argument("--review-only", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--review-only", action="store_true")
+    mode.add_argument("--review-first", action="store_true",
+                      help="Review HEAD before enabling bounded remediation for demonstrated defects")
     parser.add_argument("--implement-model", default="gpt-6.2-sol")
     parser.add_argument("--implement-effort", default="medium")
     parser.add_argument("--review-model", default="gpt-6.2-astra")

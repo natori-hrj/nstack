@@ -1,6 +1,7 @@
 """Offline distribution and disposable Git workflow checks (Python 3.11+)."""
 from concurrent.futures import ThreadPoolExecutor
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -89,6 +90,26 @@ def verify_discovery(repo, home, snapshot, names):
             assert {"poteto-mode", "setup-pstack"}.isdisjoint(paths)
         finally:
             server.terminate()
+
+
+def verify_readme_install_stops(directory):
+    bin_dir = directory / "install-stub"
+    bin_dir.mkdir()
+    python = bin_dir / "python3"
+    python.write_text('#!/bin/sh\nprintf "%s\\n" "$4" >> "$INSTALL_TRACE"\n'
+                      '[ "$4" != "$FAIL_INSTALL_STEP" ] || exit 17\n')
+    python.chmod(0o700)
+    trace = directory / "install.trace"
+    for readme in ("README.md", "README.ja.md"):
+        block = (ROOT / readme).read_text().split("```sh\n", 1)[1].split("```", 1)[0]
+        for step, expected in (("stage", ["stage"]), ("activate", ["stage", "activate"])):
+            home = directory / f"{readme}-{step}"
+            trace.write_text("")
+            env = dict(os.environ, PATH=f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+                       CODEX_HOME=str(home), INSTALL_TRACE=str(trace), FAIL_INSTALL_STEP=step)
+            result = subprocess.run(["sh", "-c", block], cwd=ROOT, env=env, capture_output=True)
+            assert result.returncode == 17 and trace.read_text().splitlines() == expected
+            assert not (home / "agents").exists()
 
 
 def verify_install(repo, directory, names):
@@ -223,6 +244,7 @@ if __name__ == "__main__":
         repo = directory / "repo"
         repo.mkdir()
         git(repo, "init", "-q")
+        verify_readme_install_stops(directory)
         verify_install(repo, directory, names)
         verify_roles(directory)
         verify_worktrees(repo, directory)

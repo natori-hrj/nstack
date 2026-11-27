@@ -15,17 +15,20 @@ nstack (natori-stack) は、Lauren Tan (Poteto) の pstack を土台にした独
 3. `$natori-mode インポート再試行時の重複行を修正し、修正前後のチェックを示して` のように、観測できる結果を添えて依頼します。
 
 ```sh
-config_dir="${CODEX_HOME:-$HOME/.codex}"
-revision="$(git rev-parse HEAD)"
-python3 adapters/codex/install.py --home "$config_dir" stage "$revision"
-python3 adapters/codex/install.py --home "$config_dir" activate "$revision"
-mkdir -p "$config_dir/agents"
-for agent in examples/agents/*.toml; do
-  dest="$config_dir/agents/${agent##*/}"
-  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
-    (set -C; cat "$agent" > "$dest") || exit 1
-  fi
-done
+(
+  set -e
+  config_dir="${CODEX_HOME:-$HOME/.codex}"
+  revision="$(git rev-parse HEAD)"
+  python3 adapters/codex/install.py --home "$config_dir" stage "$revision"
+  python3 adapters/codex/install.py --home "$config_dir" activate "$revision"
+  mkdir -p "$config_dir/agents"
+  for agent in examples/agents/*.toml; do
+    dest="$config_dir/agents/${agent##*/}"
+    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+      (set -C; cat "$agent" > "$dest") || exit 1
+    fi
+  done
+)
 ```
 
 ## 更新と切り戻し

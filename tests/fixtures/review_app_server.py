@@ -50,7 +50,8 @@ for line in sys.stdin:
     elif method == "model/list":
         assert params["modelProvider"] == "openai"
         model = "gpt-6.2-sol" if params["cursor"] is None else "gpt-6.2-astra"
-        response = {"data": [] if scenario == "model" and params["cursor"] else [
+        response = {"data": [] if ((scenario == "model" and params["cursor"]) or
+                                  (scenario == "review-first-pass" and not params["cursor"])) else [
             {"model": model, "supportedReasoningEfforts": [{"reasoningEffort": "medium"}]}
         ], "nextCursor": "page-2" if params["cursor"] is None else None}
     elif method == "command/exec":
@@ -100,7 +101,10 @@ for line in sys.stdin:
                            check=True)
             if "Fix demonstrated findings" in prompt:
                 assert "incorrect output" in prompt
-                target.write_text("correct\n")
+                if scenario == "review-first-two-rounds" and target.read_text() == "correct\n":
+                    target.write_text("incorrect-two\n")
+                else:
+                    target.write_text("correct\n")
             else:
                 target.write_text("incorrect\n")
             message = "implementation transcript marker"
@@ -110,13 +114,20 @@ for line in sys.stdin:
             sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=cwd, text=True).strip()
             assert sha in prompt and re.fullmatch("[0-9a-f]{40}", sha)
             findings = []
-            if target.read_text() != "correct\n" or scenario in {"repeat", "review-only-changes"}:
+            if target.read_text() != "correct\n" or scenario in {"repeat", "review-only-changes", "review-first-repeat", "review-first-two-rounds"}:
                 findings = [{"location": "result.txt", "evidence": "incorrect output",
                              "expected": "correct output", "impact": "wrong user-facing result"}]
+            if scenario == "review-first-two-rounds":
+                findings[0]["location"] = f"result.txt:{target.read_text().strip()}"
+            if scenario == "review-first-repeat":
+                findings.append({**findings[0], "location": "second-output"})
+                if target.read_text() == "correct\n":
+                    findings.reverse()
             if scenario == "reroute":
                 notify("model/rerouted", {**context, "toModel": "another-model"})
             message = json.dumps({"candidate": "0" * 40 if scenario == "sha" else sha,
-                                  "verdict": "changes_requested" if findings else "pass",
+                                  "verdict": ("blocked" if scenario == "review-first-blocked" else
+                                              "changes_requested" if findings else "pass"),
                                   "findings": findings})
         notify("item/completed", {**context, "item": {"type": "agentMessage", "text": message}})
         notify("thread/tokenUsage/updated", {**context, "tokenUsage": {"total": {"inputTokens": 10}}})

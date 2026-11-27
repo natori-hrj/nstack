@@ -19,17 +19,20 @@ An engineering toolkit for Codex, built on the foundations of pstack. nstack (na
 Run from this checkout. Use Python 3.11+ and PyYAML on a POSIX host. For an existing installation, read the migration guide before activation. Keep both MIT notices with redistributed copies.
 
 ```sh
-config_dir="${CODEX_HOME:-$HOME/.codex}"
-revision="$(git rev-parse HEAD)"
-python3 adapters/codex/install.py --home "$config_dir" stage "$revision"
-python3 adapters/codex/install.py --home "$config_dir" activate "$revision"
-mkdir -p "$config_dir/agents"
-for agent in examples/agents/*.toml; do
-  dest="$config_dir/agents/${agent##*/}"
-  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
-    (set -C; cat "$agent" > "$dest") || exit 1
-  fi
-done
+(
+  set -e
+  config_dir="${CODEX_HOME:-$HOME/.codex}"
+  revision="$(git rev-parse HEAD)"
+  python3 adapters/codex/install.py --home "$config_dir" stage "$revision"
+  python3 adapters/codex/install.py --home "$config_dir" activate "$revision"
+  mkdir -p "$config_dir/agents"
+  for agent in examples/agents/*.toml; do
+    dest="$config_dir/agents/${agent##*/}"
+    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+      (set -C; cat "$agent" > "$dest") || exit 1
+    fi
+  done
+)
 ```
 
 ### Upgrading and rolling back
