@@ -58,7 +58,7 @@ jobs:
               CGO_ENABLED=1 CC=gcc "$@"
           }
           offline go version
-          unformatted="$(offline gofmt -l cmd internal tests/fixtures/go-review)"
+          unformatted="$(offline gofmt -l distribution.go distribution_test.go cmd internal tests/fixtures/go-review)"
           if [ -n "$unformatted" ]; then
             printf 'Files requiring gofmt:\n%s\n' "$unformatted" >&2
             exit 1
@@ -68,6 +68,39 @@ jobs:
           # ubuntu-24.04 uses Linux amd64 here and has the C toolchain for -race.
           offline go test -race ./...
           offline python3 -B tests/go_compatibility.py
+      - name: Verify reproducible Linux distribution and Python-free runtime
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          goroot="$(go env GOROOT)"
+          work="$(mktemp -d "$RUNNER_TEMP/nstack-dist.XXXXXX")"
+          mkdir "$work/home" "$work/cache" "$work/source" "$work/tmp"
+          git archive "$CANDIDATE_SHA" | tar -xf - -C "$work/source"
+          build() {
+            env -i HOME="$work/home" PATH="$goroot/bin" TMPDIR="$work/tmp" \
+              GOCACHE="$work/cache" GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
+              CGO_ENABLED=0 GOOS=linux GOARCH="$1" GOAMD64=v1 GOARM64=v8.0 \
+              "$goroot/bin/go" build -mod=vendor -trimpath -buildvcs=false -o "$2" ./cmd/nstack-codex
+          }
+          for arch in amd64 arm64; do
+            build "$arch" "$work/nstack-linux-$arch"
+            (cd "$work/source"; build "$arch" "$work/rebuilt-$arch")
+            cmp "$work/nstack-linux-$arch" "$work/rebuilt-$arch"
+          done
+          (cd "$work"; sha256sum nstack-linux-amd64 nstack-linux-arm64 > SHA256SUMS; sha256sum -c SHA256SUMS)
+          nstack() { env -i PATH= HOME="$work/home" "$work/nstack-linux-amd64" "$@"; }
+          nstack --version
+          for id in first second; do
+            nstack install --home "$work/home" stage "$id"
+            nstack install --home "$work/home" activate "$id"
+          done
+          test "$(readlink "$work/home/skills/nstack-managed")" = "$work/home/nstack/snapshots/second/skills"
+          nstack install --home "$work/home" activate first
+          test "$(readlink "$work/home/skills/nstack-managed")" = "$work/home/nstack/snapshots/first/skills"
+          cmp LICENSE "$work/home/nstack/snapshots/first/LICENSE"
+          cmp LICENSE-upstream "$work/home/nstack/snapshots/first/LICENSE-upstream"
+          printf '%s\n' '{"data":[{"model":"gpt-6.2-astra","supportedReasoningEfforts":[{"reasoningEffort":"medium"}]}]}' |
+            nstack check-role "$work/home/nstack/snapshots/first/examples/agents/nstack_review.toml"
   validate:
     needs: common
     if: ${{ always() }}
