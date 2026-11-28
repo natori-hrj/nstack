@@ -8,7 +8,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 
@@ -31,30 +30,6 @@ func waitForPID(ctx context.Context, path string) (int, error) {
 			return 0, ctx.Err()
 		case <-ticks.C:
 		}
-	}
-}
-
-func assertStopped(t *testing.T, pid int) {
-	t.Helper()
-	path := filepath.Join("/proc", strconv.Itoa(pid), "stat")
-	for deadline := time.Now().Add(time.Second); ; {
-		data, err := os.ReadFile(path)
-		// Procfs can find the PID when opening /stat and lose it before
-		// reading. Both kernel results mean the observed child is gone.
-		if os.IsNotExist(err) || errors.Is(err, syscall.ESRCH) {
-			return
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		// A zombie is already dead; the host's PID 1 reaps adopted children.
-		if end := strings.LastIndexByte(string(data), ')'); end >= 0 && strings.HasPrefix(string(data[end+1:]), " Z ") {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("child %d still running: %s", pid, data)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
 }
 
@@ -96,6 +71,11 @@ func TestTurnTeardown(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			fd := trackFixtureProcess(t, pid)
+			armFixtureArgCleanup(t, fd, pid, pidFile)
+			if test.want == nil {
+				fixtureWrite(pidFile+".exit", "")
+			}
 			if test.want == context.Canceled {
 				cancel()
 			}
@@ -107,7 +87,7 @@ func TestTurnTeardown(t *testing.T) {
 			} else if !errors.Is(got, test.want) {
 				t.Fatalf("expected %v, got %v", test.want, got)
 			}
-			assertStopped(t, pid)
+			assertReaped(t, fd)
 		})
 	}
 }
@@ -125,7 +105,7 @@ func TestCancelledGateStopsChild(t *testing.T) {
 	go func() {
 		result, err := a.Gate(ctx, workflow.GateRequest{
 			Directory: checkout, Scratch: scratch, Evidence: filepath.Join(scratch, "gate"),
-			Argv: []string{"/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; exec /bin/sleep 30`, "gate", pidFile},
+			Argv: []string{"/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; /bin/sleep 30`, "gate", pidFile},
 		})
 		if err == nil && result.ExitCode != nil {
 			err = fmt.Errorf("cancelled gate returned terminal code %d", *result.ExitCode)
@@ -136,9 +116,12 @@ func TestCancelledGateStopsChild(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	fd := trackFixtureProcess(t, pid)
+	armFixtureArgCleanup(t, fd, pid, pidFile)
+	cancel()
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation was not preserved: %v", err)
 	}
-	assertStopped(t, pid)
+	assertReaped(t, fd)
 }

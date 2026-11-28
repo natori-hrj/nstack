@@ -131,7 +131,6 @@ jobs:
       CODEX_VERSION: "0.172.0"
       CODEX_ARCHIVE_SHA256: a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392
       CODEX_EXEC_SERVER_ARCHIVE_SHA256: 1276ea8882a5c96fbc35fdb57c169198fe95f845dab0be864a8a0bc026efa8d5
-      CODEX_BWRAP_ARCHIVE_SHA256: e3968d3fdca4d9e078c118a52b2d0d76c7b55a03fc012cc210c544e9e60561d8
     steps:
       - name: Require common verification
         env:
@@ -145,11 +144,24 @@ jobs:
         with:
           go-version: "1.27.4"
           cache: false
+      - name: Enable Ubuntu's restricted Bubblewrap profile
+        shell: bash
+        run: |
+          test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apparmor-profiles bubblewrap
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          test "$(dpkg-query --search "$profile")" = "apparmor-profiles: $profile"
+          test "$(dpkg-query --search /usr/bin/bwrap)" = "bubblewrap: /usr/bin/bwrap"
+          sudo apparmor_parser --replace "$profile"
+          test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
+          confined="$(/usr/bin/bwrap --unshare-user --unshare-pid --unshare-net --ro-bind / / --proc /proc -- /bin/cat /proc/self/attr/current)"
+          test "$confined" = 'bwrap//&unpriv_bwrap (enforce)'
       - name: Install pinned validation tools
         shell: bash
         run: |
           tool_dir="$(mktemp -d "$RUNNER_TEMP/nstack-tools.XXXXXX")"
-          mkdir "$tool_dir/bin" "$tool_dir/codex-resources"
+          mkdir "$tool_dir/bin"
           install_component() {
             local name="$1" checksum="$2" destination="$3" asset archive
             asset="${name}-x86_64-unknown-linux-musl"
@@ -162,9 +174,8 @@ jobs:
             install -m 0755 "$tool_dir/$asset" "$tool_dir/$destination"
           }
           install_component codex "$CODEX_ARCHIVE_SHA256" bin/codex
-          # Keep the companion and bubblewrap in Codex's packaged layout.
+          # The exec server stays next to Codex. Use Ubuntu's confined bwrap.
           install_component codex-exec-server "$CODEX_EXEC_SERVER_ARCHIVE_SHA256" bin/codex-exec-server
-          install_component bwrap "$CODEX_BWRAP_ARCHIVE_SHA256" codex-resources/bwrap
           printf '%s\n' "$tool_dir/bin" >> "$GITHUB_PATH"
       - name: Verify exact candidate without provider credentials
         shell: bash
@@ -185,6 +196,7 @@ jobs:
           for command in codex codex-exec-server git; do
             ln -s "$(command -v "$command")" "$isolated/bin/$command"
           done
+          ln -s /usr/bin/bwrap "$isolated/bin/bwrap"
           env -i HOME="$isolated/home" CODEX_HOME="$isolated/home" PATH="$goroot/bin:$isolated/bin" \
             TMPDIR="$isolated/tmp" GOCACHE="$isolated/cache" GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off \
             CGO_ENABLED=0 GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_ALLOW_PROTOCOL=file \
