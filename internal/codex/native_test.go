@@ -213,7 +213,8 @@ func TestNativeOfflineCancellation(t *testing.T) {
 	if err := os.WriteFile(probe, program, 0700); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
+	type commandOutcome struct{ commandErr, cleanupErr error }
+	done := make(chan commandOutcome, 1)
 	go func() {
 		defer close(done)
 		result, err := s.gate(cwd, []string{probe, "15"}, evidence)
@@ -224,7 +225,7 @@ func TestNativeOfflineCancellation(t *testing.T) {
 		if s.close() != cleanup {
 			cleanup = errors.New("repeated cleanup did not preserve its result")
 		}
-		done <- errors.Join(err, cleanup)
+		done <- commandOutcome{err, cleanup}
 	}()
 	// The sandbox uses a PID namespace. Observe the actual host PID by
 	// matching the unique test executable's comm value.
@@ -243,18 +244,20 @@ func TestNativeOfflineCancellation(t *testing.T) {
 		}
 		if pid == 0 {
 			select {
-			case err := <-done:
-				t.Fatalf("native command ended before its child was observed: %v", err)
+			case outcome := <-done:
+				t.Fatalf("native command ended before its child was observed: %v", errors.Join(outcome.commandErr, outcome.cleanupErr))
 			case <-ctx.Done():
-				t.Fatalf("could not find native child: %v (command error: %v)", ctx.Err(), <-done)
+				outcome := <-done
+				t.Fatalf("could not find native child: %v (command error: %v)", ctx.Err(), errors.Join(outcome.commandErr, outcome.cleanupErr))
 			case <-time.After(10 * time.Millisecond):
 			}
 		}
 	}
 	fd := trackFixtureProcess(t, pid)
 	cancel()
-	if err := <-done; !errors.Is(err, context.Canceled) || strings.Contains(err.Error(), "cleanup not confirmed") {
-		t.Fatalf("expected cancellation, got %v", err)
+	outcome := <-done
+	if !errors.Is(outcome.commandErr, context.Canceled) || outcome.cleanupErr != nil {
+		t.Fatalf("expected cancellation and confirmed cleanup, got command=%v cleanup=%v", outcome.commandErr, outcome.cleanupErr)
 	}
 	assertReaped(t, fd)
 	t.Logf("native child %d observed, stopped and reaped before cancellation completed", pid)

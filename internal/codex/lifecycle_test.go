@@ -57,6 +57,9 @@ func TestExternalExecServerCannotBeSupervised(t *testing.T) {
 }
 
 func runLifecycleFixture(dir, node string) error {
+	if node == "transient" {
+		return nil
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
@@ -99,7 +102,7 @@ func runLifecycleFixture(dir, node string) error {
 				if _, err := os.Stat(filepath.Join(dir, "fork")); err != nil {
 					break
 				}
-				child := exec.Command("/bin/true")
+				child := exec.Command(exe, lifecycleFixtureArgument, dir, "transient")
 				if err := child.Start(); err != nil {
 					return err
 				}
@@ -198,8 +201,8 @@ func TestSupervisorReapsDescendants(t *testing.T) {
 			for _, fd := range nodes {
 				assertReaped(t, fd)
 			}
-			if err := unrelated.Process.Signal(syscall.Signal(0)); err != nil {
-				t.Fatalf("unrelated process affected: %v", err)
+			if pid, err := syscall.Wait4(unrelated.Process.Pid, nil, syscall.WNOHANG, nil); err != nil || pid != 0 {
+				t.Fatalf("unrelated process exited or is no longer waitable: pid=%d err=%v", pid, err)
 			}
 		})
 	}
