@@ -39,8 +39,12 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     git(repo, "config", "user.email", "fixture@example.invalid")
     git(repo, "config", "commit.gpgsign", "false")
     git(repo, "switch", "-qc", "feature")
+    read_only_pass = review_only or scenario in {
+        "review-first-pass", "review-first-detached", "review-first-fast-forward",
+        "review-first-diverged",
+    }
     if review_only or review_first:
-        result_value = "incorrect" if review_first and scenario not in {"review-first-pass", "review-first-detached"} else "correct"
+        result_value = "correct" if read_only_pass else "incorrect"
         (repo / "result.txt").write_text(result_value + "\n")
         git(repo, "add", "result.txt")
         git(repo, "commit", "-qm", "review-only candidate")
@@ -62,8 +66,13 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         git(repo, "push", str(remote), f"{base}:refs/heads/feature")
         git(remote, "symbolic-ref", "HEAD", "refs/heads/feature")
         git(repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
-    if scenario in {"delivery-mismatch", "review-only-fast-forward", "delivery-ref-suffix"}:
+    if scenario in {"delivery-mismatch", "review-only-fast-forward", "review-first-fast-forward", "delivery-ref-suffix"}:
         git(repo, "push", str(remote), f"{base}:{delivery_ref}")
+    if scenario == "review-first-remediation-fast-forward":
+        git(repo, "push", str(remote), f"{initial}:{delivery_ref}")
+    if scenario == "review-first-diverged":
+        other = git(repo, "commit-tree", "HEAD^{tree}", "-p", base, "-m", "divergent remote tip")
+        git(repo, "push", str(remote), f"{other}:{delivery_ref}")
     suffix_ref = f"refs/heads/archive/{delivery_ref}"
     if scenario == "delivery-ref-suffix":
         git(remote, "update-ref", suffix_ref, base)
@@ -187,7 +196,7 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     assert preflight["disabledMcpServers"] == 1 and preflight["gateScratchWrite"]
     assert preflight["roles"][-1]["sandbox"] == "readOnly"
     first = json.loads((evidence / "0-review.json").read_text())
-    if review_only or scenario in {"review-first-pass", "review-first-detached"}:
+    if read_only_pass:
         assert not list(evidence.glob("*-implementation.json"))
         assert git(repo, "rev-parse", "HEAD") == initial
         assert not git(repo, "for-each-ref", work_ref)
@@ -246,7 +255,7 @@ def verify_pr_delivery(root):
     start = git(repo, "rev-parse", "HEAD^")
     base = git(repo, "rev-parse", "main")
     args = SimpleNamespace(push=str(remote), github_repo="fixture/project", delivery_ref="refs/heads/123",
-                           pr_base="main", pr_title=None, pr_number=456, review_only=False)
+                           pr_base="main", pr_title=None, pr_number=456)
     evidence = root / "pr-evidence"
     evidence.mkdir()
     reported_head = "another-branch"
@@ -282,7 +291,7 @@ def verify_pr_delivery(root):
         ), "github.com/fixture/project")
         for wrong_base, reason in ((start, "PR diff"), (base, "authorized branches")):
             try:
-                review_workflow.Delivery(args, repo, wrong_base, start)
+                review_workflow.Delivery(args, repo, wrong_base, start, writer_required=True)
             except ValueError as error:
                 assert reason in str(error)
             else:
@@ -291,13 +300,13 @@ def verify_pr_delivery(root):
         reported_head = "123"
         open_prs.append(other_pr)
         try:
-            review_workflow.Delivery(args, repo, base, start)
+            review_workflow.Delivery(args, repo, base, start, writer_required=True)
         except ValueError as error:
             assert "open PR" in str(error)
         else:
             raise AssertionError("accepted explicit PR delivery with another open PR on the same head")
         open_prs.remove(other_pr)
-        delivery = review_workflow.Delivery(args, repo, base, start)
+        delivery = review_workflow.Delivery(args, repo, base, start, writer_required=True)
         open_prs.append(other_pr)
         try:
             delivery.push(candidate, evidence)
@@ -358,6 +367,9 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "review-first-detached", None, review_first=True)
         exercise(root, fake_bin, "review-first-two-rounds", "remediation budget exhausted", review_first=True)
         exercise(root, fake_bin, "review-first-pass", None, review_first=True)
+        exercise(root, fake_bin, "review-first-fast-forward", None, review_first=True)
+        exercise(root, fake_bin, "review-first-diverged", "merge-base", review_first=True)
+        exercise(root, fake_bin, "review-first-remediation-fast-forward", None, review_first=True)
         exercise(root, fake_bin, "review-first-fix", None, review_first=True)
         exercise(root, fake_bin, "review-first-repeat", "recurs or remains uncertain", review_first=True)
         exercise(root, fake_bin, "review-first-uncertain", "recurs or remains uncertain", review_first=True)

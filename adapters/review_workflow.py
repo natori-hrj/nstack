@@ -244,7 +244,7 @@ def check_work(repo, ref, sha, original, start):
 
 
 class Delivery:
-    def __init__(self, args, repo, base, start):
+    def __init__(self, args, repo, base, start, *, writer_required):
         self.repo, self.args, self.base = repo, args, base
         self.ref = branch_ref(repo, args.delivery_ref)
         self.pr_base_ref = f"refs/heads/{args.pr_base}" if args.pr_base else None
@@ -252,7 +252,7 @@ class Delivery:
         self.config, self.github = delivery_target(args, repo, self.remote)
         self.default = self.remote_default()
         self.remote_start = self.remote_ref(self.ref)
-        if not args.review_only and self.remote_start is not None and self.remote_start != start:
+        if writer_required and self.remote_start is not None and self.remote_start != start:
             raise ValueError("delivery ref does not match the starting candidate")
         self.number = args.pr_number
         if self.github and self.number is None:
@@ -390,7 +390,7 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
                     if current_ref(repo) != original:
                         raise ValueError("original checkout ref changed")
                     if args.push:
-                        delivery = Delivery(args, repo, base, start)
+                        delivery = Delivery(args, repo, base, start, writer_required=True)
                         if work in (delivery.default, delivery.ref, delivery.pr_base_ref):
                             raise ValueError("work ref must be distinct from delivery and protected refs")
                     git(repo, "switch", "-c", work.removeprefix("refs/heads/"), last)
@@ -493,7 +493,7 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
                     raise ValueError("starting ref or candidate changed")
                 if args.push:
                     if delivery is None:
-                        delivery = Delivery(args, repo, base, start)
+                        delivery = Delivery(args, repo, base, start, writer_required=False)
                     delivery.push(candidate, evidence)
                 return candidate
             if review["verdict"] == "blocked":
