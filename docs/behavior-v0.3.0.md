@@ -99,4 +99,32 @@ running serially or parsing a reply as JSON locally.
   it should not start a live harness. The runner checks real exit codes, refs,
   files and candidate-bound evidence without requiring stable temp paths,
   Git object IDs or elapsed time. Use the same runner for both launchers as
-  the Go port lands. It does not yet test a Go binary or claim full parity.
+  the Go port lands. The runner alone does not claim full parity.
+
+The G2 comparison command is `python3 -B tests/go_compatibility.py` (Go 1.22+
+and Git). It uses the Go CLI with an injected, test-only adapter: the portable
+G1 cases, matching PR delivery artifacts and Git side effects on local bare
+remotes, and the existing extended cases through the simulated app-server
+fixture. No native harness executable, account, or network is used in these
+comparison cases. `go test ./...` additionally exercises cancellation,
+timeouts and rejection of unverified evidence. The Go core has no default
+production adapter; native process, permissions and authenticated verification
+remain separate adapter gates.
+
+### Intentional Go input differences
+
+- **Gate boundary and authorization:** Python's `argparse` can accept a gate
+  without `--` and interpret a trailing `--review-only` as a workflow flag.
+  Go requires the documented `--` before the gate argv and full workflow
+  option names. For example, `true --review-only` without the separator
+  exits `2` before dispatch, ref changes, or evidence creation. The
+  documented `--review-only -- true` form still reviews without a writer.
+  This avoids accidentally authorizing the default implementation route
+  when a caller mixes workflow flags and gate arguments.
+- **Evidence:** Go rejects duplicate JSON member names in a verdict instead
+  of letting a later value hide an earlier one. A missing gate exit code
+  or missing or mismatched turn identity cannot produce a pass. Rejected
+  results block review or delivery; a reached review attempt retains its
+  candidate, base, returned message, and validation error.
+  A role selected for dispatch must have a nonblank model and reasoning
+  effort; empty values cannot establish the required role identity.
