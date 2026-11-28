@@ -356,7 +356,7 @@ with adapter.isolated(cwd, cwd / "isolated") as (server, count):
     assert config.read_text() == original
 
 
-def verify_protocol(launcher=()):
+def verify_protocol(launcher=(), *, go_native=False):
     with TemporaryDirectory(prefix="nstack-review-test-") as temporary:
         root = Path(temporary)
         if not launcher:
@@ -416,9 +416,33 @@ def verify_protocol(launcher=()):
         case("budget", "remediation budget exhausted", budget=0)
         case("dirty", "dirty checkout")
         case("gate", "quality gate failed", gated=False)
+        if go_native:
+            for scenario, error in {
+                "api-key-account": "requires the existing ChatGPT OAuth",
+                "account-case-alias": "noncanonical Codex field",
+                "model-case-alias": "noncanonical Codex field",
+                "wrong-model": "unexpected model, context, or approval settings",
+                "wrong-effort": "unexpected model, context, or approval settings",
+                "missing-session": "unexpected model, context, or approval settings",
+                "missing-thread-lineage": "unexpected model, context, or approval settings",
+                "missing-turn": "missing turn ID",
+                "missing-terminal-error": "did not complete the turn unambiguously",
+                "malformed-verdict": "invalid structured review result",
+                "duplicate-turn-response": "duplicate Codex response ID",
+                "late-verdict": "item completed after the turn ended",
+                "unexpected-id": "unexpected or duplicate Codex response ID",
+                "missing-response": "invalid Codex JSON-RPC response",
+                "invalid-json": "invalid Codex JSON-RPC frame",
+                "partial-frame": "partial Codex frame at EOF",
+            }.items():
+                case(scenario, error, review_only=True)
+            case("missing-writer-roots", "did not report the implementation sandbox writable roots")
     print("Codex protocol fixtures: remediation, exact SHA push and fail-closed cases verified")
 
 
 if __name__ == "__main__":
     argv = sys.argv[1:]
-    verify_protocol(argv[1:] if argv[:1] == ["--"] else argv)
+    go_native = argv[:1] == ["--go-native"]
+    if go_native:
+        argv = argv[1:]
+    verify_protocol(argv[1:] if argv[:1] == ["--"] else argv, go_native=go_native)

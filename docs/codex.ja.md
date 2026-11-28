@@ -66,6 +66,14 @@ python3 adapters/codex/review.py --authorize-host \
 
 納品時は Git の実効 push 先を1つに確定し、remote HEAD を検証できない場合は停止します。PR の差分は、レビュー対象の基点と候補 SHA に一致する必要があります。基点のブランチがローカルにない場合は、実行前に取得してください。レビュー専用モードで修正を求められた場合は非ゼロで終了し、`status.json` に `changes_requested` を記録します。配布物全体の検証では、スキルのフロントマターの確認に PyYAML も必要です。
 
+### Go ホストアダプター
+
+このチェックアウトで `go build -o nstack-codex ./cmd/nstack-codex` を実行します（Go 1.22 以降、Linux）。Codex CLI 0.172.0 と既存の ChatGPT OAuth ログインが必要です。`nstack-codex review` には上記と同じ引数を渡し、ゲートコマンドの前には `--` を指定します。`nstack-codex check-role <導入済みロール.toml> < model-list.json` は Python 版と同じ入力でロールの公示情報を検証します。
+
+`python3 -B tests/go_compatibility.py` は認証なしで共通ワークフロー、ロール、app-server の fixture を実行します。`NSTACK_CODEX_NATIVE_TEST=offline go test -v ./internal/codex -run '^TestNativeOffline'` は実 Codex を認証なしで検証します。別の `NSTACK_CODEX_NATIVE_TEST=oauth go test -v ./internal/codex -run '^TestNativeOAuth$'` は既存 OAuth アカウントの利用許可を得てから実行し、使い捨てデータで Sol と Astra の応答を確認します。
+
+TOML パーサーを同梱しています。[MIT ライセンス通知](../vendor/github.com/BurntSushi/toml/COPYING)も参照してください。
+
 ## 既存候補を編集前にレビューする
 
 クリーンなチェックアウトで `--review-first` を指定すると、既存の候補を検証します。初回合格なら作業ブランチを作りません。指摘がある場合は明示された作業 ref と、配信指定があれば実効 remote の既定ブランチ、配信 ref、開始 SHA、PR を照合してから修正します。再レビューは過去の指摘を ID ごとに `resolved`、`recurring`、`uncertain` と評価し、新規指摘も別途探索します。再発、判定不能、照合の不足があれば次の修正を止めます。指摘の意味の照合には誤りがあり得るため、修正上限は2巡です。生の応答と候補・基点 SHA は各レビューの証跡に残ります。

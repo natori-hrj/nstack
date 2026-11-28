@@ -8,6 +8,7 @@ import sys
 from tempfile import TemporaryDirectory
 
 from compatibility import FIXTURE, verify
+from validate import verify_roles
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -92,6 +93,94 @@ def pr_case(directory, launcher, scenario, expected_error):
     return completed.returncode, artifacts, head
 
 
+def verify_role_toml(directory, native):
+    directory.mkdir()
+    home = directory / "home"
+    tools = directory / "bin"
+    home.mkdir()
+    tools.mkdir()
+    codex = tools / "codex"
+    codex.write_text('#!/bin/sh\n: > "$CODEX_HOME/unexpected-dispatch"\nexit 99\n')
+    codex.chmod(0o700)
+    env = {
+        "PATH": f"{tools}{os.pathsep}{os.environ['PATH']}", "HOME": str(home),
+        "CODEX_HOME": str(home), "PYTHONUTF8": "1",
+    }
+    role = directory / "role.toml"
+    python = (sys.executable, "-B", str(ROOT / "adapters/codex/check_role.py"))
+    go = (str(native), "check-role")
+    optional = "nstack_security_daybreak"
+    catalog = json.dumps({"data": [
+        {"model": "configured", "supportedReasoningEfforts": [{"reasoningEffort": "high"}]},
+        {"model": "inherited", "supportedReasoningEfforts": [{"reasoningEffort": "medium"}]},
+        {"model": "optional", "hidden": True, "modelSpecialty": "cyber",
+         "availableAccessPrograms": {"cyber": ["daybreakBlue"]},
+         "supportedReasoningEfforts": [{"reasoningEffort": "medium"}]},
+    ]})
+    name = 'name = "review"\n'
+    configured = 'model = "configured"\nmodel_reasoning_effort = "high"\n'
+    # Each available model advertises a single effort, so a successful
+    # check verifies the selected effort as well as the reported model.
+    cases = [
+        ("canonical", name + configured, "inherited", (), "review: configured", ""),
+        ("uppercase model", name + 'MODEL = "configured"\nmodel_reasoning_effort = "high"\n', "absent", (), "",
+         "absent is absent"),
+        ("uppercase effort", name + 'MODEL_REASONING_EFFORT = "high"\n', "inherited", (),
+         "review: inherited", ""),
+        ("uppercase name", 'NAME = "review"\n', "inherited", (), "", ""),
+        ("mixed case", name + '"MoDeL" = "configured"\nModel_Reasoning_Effort = "high"\n',
+         "inherited", (), "review: inherited", ""),
+        ("canonical and aliases", name + configured + 'NAME = "other"\nMODEL = "inherited"\n'
+         'MODEL_REASONING_EFFORT = "medium"\n', "inherited", (), "review: configured", ""),
+        ("unknown keys", name + 'unrecognized = 42\nMODE = false\n', "inherited", (),
+         "review: inherited", ""),
+        ("inherited", name, "inherited", (), "review: inherited", ""),
+        ("inherited model and explicit effort", name + 'model_reasoning_effort = "high"\n',
+         "inherited", (), "", "does not advertise reasoning effort high"),
+        ("explicit model and inherited effort", name + 'model = "configured"\n',
+         "inherited", (), "", "does not advertise reasoning effort medium"),
+        ("invalid model type", name + 'model = 42\n', "inherited", (), "", ""),
+        ("invalid effort type", name + 'model_reasoning_effort = 42\n', "inherited", (), "", ""),
+        ("empty explicit model", name + 'model = ""\n', "inherited", (), "",
+         "resolve the inherited model"),
+        ("unknown model", name + 'model = "missing"\n', "inherited", (), "", "missing is absent"),
+        ("duplicate canonical keys", name + configured + '"model" = "inherited"\n',
+         "inherited", (), "", ""),
+        ("duplicate ignored keys", name + 'MODEL = "inherited"\n"MODEL" = "configured"\n',
+         "inherited", (), "", ""),
+        ("nested tables", name + '[role]\nname = "other"\nmodel = "configured"\n'
+         'model_reasoning_effort = "high"\n', "inherited", (), "review: inherited", ""),
+        ("nested alias", name + 'MODEL.value = "configured"\n', "inherited", (),
+         "review: inherited", ""),
+        ("nested canonical key is invalid", name + 'model.value = "configured"\n',
+         "inherited", (), "", ""),
+        ("literal dotted key is not a table", name + '"model.value" = "configured"\n',
+         "inherited", (), "review: inherited", ""),
+        ("case alias cannot grant access", name + f'NAME = "{optional}"\nmodel = "optional"\n',
+         "inherited", ("--daybreak-selected",), "", "requires the optional defensive role"),
+        ("case alias cannot remove opt-in", f'name = "{optional}"\nNAME = "review"\n'
+         'model = "optional"\n', "inherited", (), "", "explicitly select"),
+        ("canonical optional role opt-in", f'name = "{optional}"\nmodel = "optional"\n',
+         "inherited", ("--daybreak-selected",), f"{optional}: optional", ""),
+    ]
+    for label, source, inherited, extra, expected, error in cases:
+        role.write_text(source)
+        args = [str(role), "--inherited-model", inherited, "--inherited-effort", "medium", *extra]
+        for launcher in (python, go):
+            run = subprocess.run([*launcher, *args], cwd=directory, env=env, input=catalog,
+                                 text=True, capture_output=True, timeout=10)
+            detail = (label, launcher, run)
+            if expected:
+                assert run.returncode == 0 and not run.stderr, detail
+                assert run.stdout == f"{expected} advertised (provider response unverified)\n", detail
+            else:
+                assert run.returncode == 1 and not run.stdout, detail
+                assert run.stderr.startswith("role unavailable: ") and error in run.stderr, detail
+            assert role.read_text() == source and not list(home.iterdir()), detail
+            assert set(directory.iterdir()) == {home, tools, role} and set(tools.iterdir()) == {codex}, detail
+    print(f"Codex role TOML: {len(cases)} Python/Go cases verified", flush=True)
+
+
 def main():
     with TemporaryDirectory(prefix="nstack-go-compat-") as scratch:
         root = Path(scratch)
@@ -115,11 +204,17 @@ def main():
         print("PR delivery evidence and side effects match on Python and Go", flush=True)
         home = root / "protocol-home"
         home.mkdir()
+        native = root / "nstack-codex"
+        subprocess.run(["go", "build", "-o", str(native), "./cmd/nstack-codex"], cwd=ROOT, check=True)
+        verify_roles(root)
+        verify_roles(root, (str(native), "check-role"))
+        print("Codex role preflight fixtures passed on Python and Go", flush=True)
+        verify_role_toml(root / "role-toml", native)
         env = {"PATH": os.environ["PATH"], "HOME": str(home), "TMPDIR": str(root),
                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_ALLOW_PROTOCOL": "file",
                "PYTHONUTF8": "1"}
         subprocess.run([sys.executable, "-B", str(ROOT / "tests/review_workflow.py"),
-                        "--", str(binary), str(bridge), "protocol"], env=env, check=True)
+                         "--go-native", "--", str(native), "review"], env=env, check=True)
 
 
 if __name__ == "__main__":

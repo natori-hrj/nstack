@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+import time
 import tomllib
 import uuid
 
@@ -43,8 +44,23 @@ for line in sys.stdin:
         assert not active, "dispatch attempted before disabling MCP"
     if method == "initialize":
         response = {}
+        if scenario == "unexpected-id":
+            emit({"id": request["id"] + 1, "result": {}})
+            continue
+        if scenario == "missing-response":
+            emit({"id": request["id"]})
+            continue
+        if scenario == "invalid-json":
+            print('{"id":1,"id":1,"result":{}}', flush=True)
+            continue
+        if scenario == "partial-frame":
+            sys.stdout.write('{"id":1,"result":{}}')
+            break
     elif method == "account/read":
-        response = {"account": None if scenario == "unauthenticated" else {"type": "chatgpt"}}
+        response = {"account": None if scenario == "unauthenticated" else
+                    {"type": "apiKey" if scenario == "api-key-account" else "chatgpt"}}
+        if scenario == "account-case-alias":
+            response = {"account": {"type": "apiKey", "TYPE": "chatgpt"}}
     elif method == "config/read":
         response = {"config": {"mcp_servers": servers, "features": features, "web_search": "disabled"}}
     elif method == "model/list":
@@ -89,7 +105,32 @@ for line in sys.stdin:
         }
         if scenario == "wrong-policy" and state["sandbox"] == "read-only":
             response["sandbox"]["type"] = "workspaceWrite"
+        if scenario == "missing-session":
+            del response["thread"]["sessionId"]
+        if scenario == "missing-thread-lineage":
+            del response["thread"]["parentThreadId"], response["thread"]["forkedFromId"]
+        if scenario == "missing-writer-roots" and state["sandbox"] == "workspace-write":
+            del response["sandbox"]["writableRoots"]
+        if scenario == "wrong-effort":
+            response["reasoningEffort"] = "low"
+        if scenario == "wrong-model":
+            response["model"] = "another-model"
+        if scenario == "model-case-alias":
+            response["model"], response["MODEL"] = "another-model", state["model"]
     elif method == "turn/start":
+        if scenario in {"turn-eof", "turn-hang"}:
+            # Keep the liveness check host-side; the child does not need
+            # to hold or write to the protocol pipe.
+            child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"],
+                                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.DEVNULL)
+            Path(os.environ["NSTACK_TEST_CHILD_PID"]).write_text(str(child.pid))
+            if scenario == "turn-eof":
+                sys.exit(7)
+            time.sleep(30)
+        if scenario == "missing-turn":
+            emit({"id": request["id"], "result": {"turn": {}}})
+            continue
         emit({"id": request["id"], "result": {"turn": {"id": "turn"}}})
         context = {"threadId": thread, "turnId": "turn"}
         prompt = params["input"][0]["text"]
@@ -148,12 +189,26 @@ for line in sys.stdin:
                                   "changes_requested" if findings or any(
                                       p["status"] != "resolved" for p in previous) else "pass"),
                       "findings": findings}
+            if scenario == "late-verdict":
+                result["verdict"] = "changes_requested"
+                result["findings"] = [{"location": "result.txt", "expected": "correct output",
+                                       "impact": "first verdict must stand", "evidence": sha}]
             if tracked:
                 result["previous"] = previous
             message = json.dumps(result)
+            if scenario == "malformed-verdict":
+                message = '{"verdict":'
         notify("item/completed", {**context, "item": {"type": "agentMessage", "text": message}})
         notify("thread/tokenUsage/updated", {**context, "tokenUsage": {"total": {"inputTokens": 10}}})
-        notify("turn/completed", {**context, "turn": {"id": "turn", "status": "completed", "error": None}})
+        terminal = {"id": "turn", "status": "completed", "error": None}
+        if scenario == "missing-terminal-error":
+            del terminal["error"]
+        notify("turn/completed", {**context, "turn": terminal})
+        if scenario == "late-verdict":
+            result["verdict"], result["findings"] = "pass", []
+            notify("item/completed", {**context, "item": {"type": "agentMessage", "text": json.dumps(result)}})
+        if scenario == "duplicate-turn-response":
+            emit({"id": request["id"], "result": {"turn": {"id": "turn"}}})
         continue
     else:
         raise AssertionError(method)

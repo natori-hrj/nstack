@@ -6,12 +6,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 )
+
+var fixtureDefaults = RoleDefaults{
+	Writer:   Role{Model: "fixture-writer", Effort: "medium"},
+	Reviewer: Role{Model: "fixture-reviewer", Effort: "medium"},
+}
+
+func runFixtureCLI(ctx context.Context, args []string, stdout, stderr io.Writer, factory AdapterFactory) int {
+	return RunCLI(ctx, args, stdout, stderr, fixtureDefaults, factory)
+}
 
 type testAdapter struct {
 	preflight func(context.Context) (Evidence, error)
@@ -116,7 +126,7 @@ func TestRunCLIRejectsUnverifiedOrCancelledReview(t *testing.T) {
 				return result, nil
 			}}
 			var out, stderr bytes.Buffer
-			code := RunCLI(ctx, f.args("--review-only"), &out, &stderr,
+			code := runFixtureCLI(ctx, f.args("--review-only"), &out, &stderr,
 				func(time.Duration) (Adapter, error) { return adapter, nil })
 			if code != 1 || out.Len() != 0 {
 				t.Fatalf("exit=%d stdout=%q stderr=%q", code, &out, &stderr)
@@ -150,7 +160,7 @@ func TestTimeoutPreventsWriterAuthorizationFromTakingEffect(t *testing.T) {
 		return nil, ctx.Err()
 	}}
 	var out, stderr bytes.Buffer
-	code := RunCLI(context.Background(), f.args("--timeout", "1", "--work-ref", "refs/heads/new"), &out, &stderr,
+	code := runFixtureCLI(context.Background(), f.args("--timeout", "1", "--work-ref", "refs/heads/new"), &out, &stderr,
 		func(time.Duration) (Adapter, error) { return adapter, nil })
 	if code != 1 || out.Len() != 0 {
 		t.Fatalf("exit=%d stdout=%q stderr=%q", code, &out, &stderr)
@@ -167,17 +177,17 @@ func TestCLIRequiresExplicitAuthorizationAndDecimalPRNumber(t *testing.T) {
 		args := f.args("--review-only")
 		args[0] = authorization
 		var out, stderr bytes.Buffer
-		if code := RunCLI(context.Background(), args, &out, &stderr, nil); code != 2 {
+		if code := runFixtureCLI(context.Background(), args, &out, &stderr, nil); code != 2 {
 			t.Fatalf("%s: exit=%d stderr=%q", authorization, code, &stderr)
 		}
 	}
 	pr := []string{"--push", "remote", "--delivery-ref", "refs/heads/feature",
 		"--github-repo", "owner/repo", "--pr-base", "main", "--pr-number"}
-	approved, err := parse(f.args(append(pr, "08")...), &bytes.Buffer{})
+	approved, err := parse(f.args(append(pr, "08")...), &bytes.Buffer{}, fixtureDefaults)
 	if err != nil || approved.prNumber != 8 {
 		t.Fatalf("decimal PR number not preserved: %#v, %v", approved, err)
 	}
-	if _, err := parse(f.args(append(pr, "0x8")...), &bytes.Buffer{}); err == nil {
+	if _, err := parse(f.args(append(pr, "0x8")...), &bytes.Buffer{}, fixtureDefaults); err == nil {
 		t.Fatal("accepted an undocumented authorization number")
 	}
 	if _, err := os.Stat(f.evidence); !errors.Is(err, os.ErrNotExist) {
@@ -190,7 +200,7 @@ func TestMissingGateSeparatorNeverOpensWriter(t *testing.T) {
 	args := f.args("--work-ref", "refs/heads/new")
 	args = append(args[:len(args)-2], "true", "--review-only")
 	var out, stderr bytes.Buffer
-	if code := RunCLI(context.Background(), args, &out, &stderr, func(time.Duration) (Adapter, error) {
+	if code := runFixtureCLI(context.Background(), args, &out, &stderr, func(time.Duration) (Adapter, error) {
 		t.Fatal("an ambiguous invocation dispatched the adapter")
 		return nil, nil
 	}); code != 2 || !strings.Contains(stderr.String(), "must follow --") {
@@ -211,7 +221,7 @@ func TestGateWithoutTerminalCodeDoesNotDispatchReview(t *testing.T) {
 		},
 	}
 	var out, stderr bytes.Buffer
-	code := RunCLI(context.Background(), f.args("--review-only"), &out, &stderr,
+	code := runFixtureCLI(context.Background(), f.args("--review-only"), &out, &stderr,
 		func(time.Duration) (Adapter, error) { return adapter, nil })
 	if code != 1 {
 		t.Fatalf("exit=%d stderr=%q", code, &stderr)
@@ -247,7 +257,7 @@ func TestBlankRoleCannotAuthorizeWorkflow(t *testing.T) {
 			}}
 			args := f.args(append(tc.args, "--push", remote, "--delivery-ref", "refs/heads/delivered")...)
 			var out, stderr bytes.Buffer
-			if code := RunCLI(ctx, args, &out, &stderr, func(time.Duration) (Adapter, error) {
+			if code := runFixtureCLI(ctx, args, &out, &stderr, func(time.Duration) (Adapter, error) {
 				return adapter, nil
 			}); code != 1 || out.Len() != 0 {
 				t.Fatalf("exit=%d stdout=%q stderr=%q", code, &out, &stderr)
@@ -275,7 +285,7 @@ func TestRejectsEvidenceInsideCheckoutThroughSymlink(t *testing.T) {
 	}
 	f.evidence = link + "/../evidence"
 	var out, stderr bytes.Buffer
-	if code := RunCLI(context.Background(), f.args("--review-only"), &out, &stderr, nil); code != 2 {
+	if code := runFixtureCLI(context.Background(), f.args("--review-only"), &out, &stderr, nil); code != 2 {
 		t.Fatalf("exit=%d stderr=%q", code, &stderr)
 	}
 	if _, err := os.Stat(filepath.Join(f.directory, "evidence")); !errors.Is(err, os.ErrNotExist) {
@@ -292,7 +302,7 @@ func TestCheckoutLockPreventsSecondDispatch(t *testing.T) {
 	}
 	defer lock.Close()
 	var out, stderr bytes.Buffer
-	code := RunCLI(ctx, f.args("--review-only"), &out, &stderr, func(time.Duration) (Adapter, error) {
+	code := runFixtureCLI(ctx, f.args("--review-only"), &out, &stderr, func(time.Duration) (Adapter, error) {
 		t.Fatal("adapter was dispatched under an existing lock")
 		return nil, nil
 	})

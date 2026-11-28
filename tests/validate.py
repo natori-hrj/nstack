@@ -176,8 +176,9 @@ def verify_install(repo, directory, names):
     assert custom.read_text() == 'name = "nstack_implement"\nmodel = "personal-model"\n'
 
 
-def verify_roles(directory):
+def verify_roles(directory, launcher=()):
     adapter = ROOT / "adapters/codex"
+    launcher = launcher or ("python3", str(adapter / "check_role.py"))
     standard = ROOT / "examples/agents/nstack_security.toml"
     optional = adapter / "optional/nstack_security_daybreak.toml"
     effort = [{"reasoningEffort": "medium"}]
@@ -186,7 +187,7 @@ def verify_roles(directory):
                "hidden": True, "supportedReasoningEfforts": effort}
 
     def check_role(role, entries, *args):
-        return subprocess.run(["python3", str(adapter / "check_role.py"), str(role), *args],
+        return subprocess.run([*launcher, str(role), *args],
                               input=json.dumps({"data": entries}), text=True, capture_output=True)
 
     assert check_role(standard, [normal, special]).returncode == 0
@@ -209,6 +210,10 @@ def verify_roles(directory):
     result = check_role(custom, [personal], "--inherited-model", "custom-model",
                         "--inherited-effort", "high")
     assert result.returncode == 1 and "reasoning effort high" in result.stderr
+    result = subprocess.run([*launcher, "--inherited-model", "custom-model", str(custom),
+                             "--inherited-effort", "medium"],
+                            input=json.dumps({"data": [personal]}), text=True, capture_output=True)
+    assert result.returncode == 0 and "custom-model advertised" in result.stdout
 
 
 def verify_worktrees(repo, directory):
