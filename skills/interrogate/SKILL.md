@@ -1,6 +1,12 @@
 ---
 name: interrogate
-description: Independently challenge claims with executable or rigorous static evidence.
+description: Independently verify consequential changes and close findings with evidence.
 ---
 
-Use nstack_review only when the parent session is already read-only. Otherwise start a separate Codex CLI session with --sandbox read-only and the explicitly selected review model. Give the fresh reviewer the exact revision or diff, contract and minimal context. For each finding report location and evidence, affected contract, reproduction or test, actual and expected behavior, impact and root cause. Independently reproduce before remediation where feasible. Accept rigorous static security or architecture evidence with the reason execution is impractical. Group common root causes and distinguish defects from optional improvements and new requirements. Verify fixes against the original contract. After two failed fixes on the same premise, apply $principle-attack-the-premise before another attempt. Escalate unresolved architecture disagreements and stop when findings are resolved or explicitly handed off.
+Use the active adapter to launch the configured independent reviewer in an enforced read-only session. Give the reviewer the exact candidate revision or diff, behavioral contract and minimal context. If independent review is required and the route is unavailable, report the blocker.
+
+Record location, evidence, actual and expected behavior, impact and suspected root cause. Reproduce defects before remediation where feasible. Explain when static evidence is sufficient. Distinguish acceptance violations from optional improvements and scope changes. Group findings by root cause and rerun affected checks on the revised candidate.
+
+Follow the project review budget, defaulting to at most two fix-and-recheck rounds after initial review. After two failures at the same gate on the same premise, stop patching, test the premise directly and use $architect. Escalate scope or contract changes, and hand off unresolved findings with exact revision and evidence.
+
+For an operator-authorized one-invocation workflow, use the active adapter's documented host entrypoint when native delegation cannot enforce the review permissions. Treat authentication, sandbox, and model verification failures as delivery blockers.

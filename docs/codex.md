@@ -16,9 +16,9 @@
 
 Custom agents inherit the parent’s permissions. Set the actual sandbox before starting an independent review. A Git worktree provides a separate checkout. Check sandbox writable roots separately and keep sibling worktrees outside them. Serialize tasks that modify the same files.
 
-Before publication, pin the candidate revision and run the mandatory quality gates. Refresh affected checks after changes. Publication, merges, external comments, and destructive cleanup require explicit operator authorization. Inspect imported configuration, hooks, commands, and agent output before acting on them.
+Before delivery, pin the candidate revision and run the mandatory quality gates. Refresh affected checks after changes. Routine commits, feature-branch pushes and PRs follow repository authorization. Release publication, merges and destructive cleanup require explicit approval. Inspect imported configuration, hooks, commands, and agent output before acting on them.
 
-The [role examples](../examples/agents/) set Sol for implementation, Daybreak Blue for authorized defensive work, and Astra for independent review. If a mandatory route is unavailable, stop that task. Daybreak requires an approved account and model. With approved access, use the supported `--cyber-access-program daybreak_blue` option when starting the relevant session. Program selection does not grant access.
+The [role examples](../examples/agents/) set Sol for implementation and authorized defensive work, and Astra for independent review. If a mandatory route is unavailable, stop that task. Daybreak requires an approved account and model. With approved access, use the supported `--cyber-access-program daybreak_blue` option when starting the relevant session. Program selection does not grant access.
 
 ## Verification
 
@@ -27,3 +27,37 @@ Run `python3 tests/validate.py` for manifest, TOML, CLI skill discovery, and dis
 For comparisons, record elapsed time, agent runs, reviews, human interventions, and verified tasks using the same criteria. Codex JSONL usage includes input, cached input, and output tokens. Derive uncached input by subtraction. Keep session logs and IDs outside this repository. Comparative evidence is required for efficiency claims.
 
 [Skills](https://learn.chatgpt.com/docs/build-skills) · [Subagents](https://learn.chatgpt.com/docs/agent-configuration/subagents) · [Plugins](https://learn.chatgpt.com/docs/plugins) · [Configuration](https://learn.chatgpt.com/docs/config-file/config-reference) · [Daybreak in Codex CLI](https://help.openai.com/en/articles/20001607-using-daybreak-in-codex-cli)
+
+## Role preflight
+
+Read the installed role TOML and check discovery in the intended scope. Through an app-server for the same account and client, request `model/list` with `includeHidden: true` and collect all pages into one `{"data": [...]}` JSON result. Run `python3 adapters/codex/check_role.py <installed-role.toml> < model-list.json`. For an inherited model, resolve it in the active session and pass `--inherited-model` and, if applicable, `--inherited-effort`. The catalog indicates advertised access; record a completed response separately when a live gate is required.
+
+Copy `adapters/codex/optional/nstack_security_daybreak.toml` to the agents directory only if you intend to use that route. Explicitly select it for an authorized defensive task and pass `--daybreak-selected` to preflight. Require `availableAccessPrograms.cyber` to advertise `daybreakBlue`. Select the program for that session with `--cyber-access-program daybreak_blue` if required by the client. Keep the global program default off. If the role, model or access is unavailable, stop dispatch and report the reason. Model substitutions require an explicit choice.
+
+## Automated independent review
+
+Native custom agents can select a configured model and return results to their parent. Their effective sandbox and approvals are inherited. Use that route when the parent already has the required read-only permissions. A single parent with a writable implementation scope cannot enforce a read-only child review. The host entrypoint uses separate native app-server processes and ephemeral threads for the writer and each reviewer.
+
+Run once from an authorized host with Python 3.11+, Git, Codex CLI 0.172.0, and an authenticated Codex account. Use an exclusive, clean feature checkout and a task brief containing observable acceptance criteria. The host must be able to write Codex's runtime state and start its normal sandbox. The adapter uses the normal Codex home and credential store. It reads the effective MCP configuration for each checkout, applies process-local Codex `-c` overrides, and verifies that every MCP server is disabled before dispatch. User and project files are preserved. Apps, plugins, hooks, memories, web search and native delegation are disabled for these child processes. The Codex sandbox restricts writes and network, and can allow reads outside the checkout. Use a separate restricted host account if you need stronger filesystem read isolation.
+
+```sh
+python3 adapters/codex/review.py --authorize-host \
+  --work-ref refs/heads/nstack-work-example \
+  --repo /path/to/feature-checkout --base <base-sha> \
+  --brief /path/to/acceptance.md --evidence /path/to/new-private-directory \
+  --implement-model gpt-6.2-sol --implement-effort medium \
+  --review-model gpt-6.2-astra --review-effort medium \
+  -- python3 tests/validate.py
+```
+
+Use `--review-only` to verify an existing clean commit. Authorize writes with `--work-ref refs/heads/<work>`, a new local ref created only when writes are needed. The starting ref is retained. To authorize delivery, explicitly pass `--push <remote> --delivery-ref refs/heads/<feature>`, distinct from the local work ref. To update an existing PR only, add `--github-repo <owner/repo> --pr-base <branch> --pr-number <number>`. Use `--pr-title <title>` instead of the number to authorize finding or creating a draft.
+
+Preflight checks effective settings, authentication, advertised model and effort, requested thread settings, actual review write denial, and the ability to write to the gate's dedicated scratch directory. It checks effective thread settings before sending prompts and rejects reported model reroutes. A clean checkout of each candidate runs the supplied gate with its own scratch space. Review starts in a separate checkout and context. A structured verdict must identify the full SHA. Demonstrated findings run through at most two fresh remediation rounds. Gate failures, missing evidence, blocked verdicts, repeated findings and permission or authentication errors stop delivery. The private evidence directory contains per-candidate gate outputs, model and sandbox settings, thread/turn IDs, structured verdicts, available usage counts and delivery status. It can contain repository content and should stay outside Git.
+
+Delivery resolves one effective Git push destination and rejects an unverified remote HEAD. PR delivery requires the reviewed SHA range to match the PR merge base and head. Fetch the current base branch before running when that revision is missing locally. A changes-requested verdict in review-only mode exits nonzero and records `changes_requested` in `status.json`. The full distribution quality gate also requires PyYAML for skill frontmatter checks.
+
+## Review an existing candidate before editing
+
+Use `--review-first` from a clean checkout to gate and review its current commit. A first-pass approval creates no work branch. Before dispatching a writer, the controller checks the authorized work ref and, if delivery was requested, the effective remote default branch, delivery ref, starting SHA and PR. Fresh review assesses every previous finding ID as `resolved`, `recurring` or `uncertain` while independently discovering new defects. Recurrence, uncertainty and missing assessments stop further remediation. Because semantic matching can be imperfect, the hard maximum remains two rounds. Every review preserves its raw response and candidate/base SHA. Delivery rechecks the remote and PR before fast-forwarding; remote branch protections remain necessary for races at the server.
+
+An authenticated host run of the implementation-first workflow used a disposable repository with Sol and Astra at medium effort. The gate passed for `0069da1` and Astra requested changes. Sol remediated the finding, the gate passed for `47d2db8`, and a fresh read-only Astra session approved that SHA. Both reviews recorded write denial. The run took 54.1 seconds and the four turns reported 153,421 input tokens, 90,624 of them cached, and 1,335 output tokens. This is evidence for the fixture run on nstack `3cf2feb`.

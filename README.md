@@ -6,7 +6,7 @@
 
 An engineering toolkit for Codex, built on the foundations of pstack. nstack (natori-stack) is an independent adaptation of Lauren Tan (Poteto)’s work for Codex CLI. It includes 14 workflow skills, 12 engineering principles, and seven playbooks. Start with the smallest useful change and verify it through observable results.
 
-Repository: [natori-hrj/nstack](https://github.com/natori-hrj/nstack) (planned home for v0.2.0).
+[GitHub repository](https://github.com/natori-hrj/nstack)
 
 ## Quick start
 
@@ -16,27 +16,31 @@ Repository: [natori-hrj/nstack](https://github.com/natori-hrj/nstack) (planned h
 
 ### Install at user scope
 
-Run from this checkout. Existing paths are skipped. Keep both MIT notices with redistributed copies.
+Run from this checkout. Use Python 3.11+ and PyYAML on a POSIX host. For an existing installation, read the migration guide before activation. Keep both MIT notices with redistributed copies.
 
 ```sh
-config_dir="${CODEX_HOME:-$HOME/.codex}"
-mkdir -p "$config_dir/skills" "$config_dir/agents"
-cp -n LICENSE "$config_dir/nstack-LICENSE"
-cp -n LICENSE-upstream "$config_dir/nstack-LICENSE-upstream"
-for skill in skills/*; do
-  dest="$config_dir/skills/${skill##*/}"
-  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then cp -R "$skill" "$dest"; fi
-done
-for agent in examples/agents/*.toml; do
-  dest="$config_dir/agents/${agent##*/}"
-  if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then cp "$agent" "$dest"; fi
-done
+(
+  set -e
+  config_dir="${CODEX_HOME:-$HOME/.codex}"
+  revision="$(git rev-parse HEAD)"
+  python3 adapters/codex/install.py --home "$config_dir" stage "$revision"
+  python3 adapters/codex/install.py --home "$config_dir" activate "$revision"
+  mkdir -p "$config_dir/agents"
+  for agent in examples/agents/*.toml; do
+    dest="$config_dir/agents/${agent##*/}"
+    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+      (set -C; cat "$agent" > "$dest") || exit 1
+    fi
+  done
+)
 ```
 
-### Upgrading from v0.1.0
+### Upgrading and rolling back
 
 Follow the [migration guide](docs/migration.md) before installing into an existing Codex environment. It covers direct and plugin installations, preservation of customized model settings, and rollback.
 
-The example agents use Sol for implementation, Daybreak Blue for authorized defensive security, and Astra for independent review. The TOML files control model and reasoning effort. Publication and merging require explicit operator authorization.
+The default role examples use Sol for implementation and defensive work and Astra for review. You can edit the installed role TOMLs independently. Daybreak Blue is opt-in. Follow repository authorization for branch delivery and obtain explicit approval for release publication and merging. [Harness adapter contract](docs/adapters.md).
 
 [Skill reference, routing, and plugin installation](docs/skills.md) · [Codex compatibility](docs/codex.md) · [Upstream provenance](docs/upstream.md) · [MIT](LICENSE) · [Upstream MIT](LICENSE-upstream)
+
+[v0.3.0 commands and release notes](docs/v0.3.0.md)

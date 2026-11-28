@@ -1,8 +1,7 @@
 name = "nstack_security"
-description = "Implement defensive security changes and bug fixes. Preserve permissions and verify the security contract with safe checks."
-model = "gpt-daybreak-blue-latest"
+description = "Implement defensive security changes and bug fixes with the standard model route."
+model = "gpt-6.2-sol"
 model_reasoning_effort = "medium"
 developer_instructions = """
-Implement defensive security changes and bug fixes. Preserve permissions and verify the security contract with safe checks.
-Use only the task brief and necessary files. Follow repository instructions. Stop on completion or a concrete blocker. Do not publish or merge.
+Implement in-scope defensive changes and verify the observable security contract with safe checks. Preserve authorization and sandbox boundaries. Follow repository instructions and report the verification or concrete blocker. Leave remote delivery to the parent session.
 """
