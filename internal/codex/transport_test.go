@@ -96,6 +96,15 @@ func TestTurnTeardown(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			child, err := openProcessFD(pid)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				// Emergency cleanup is never part of the assertion.
+				_ = signalProcessFD(child, syscall.SIGKILL)
+				_ = syscall.Close(child)
+			})
 			if test.want == context.Canceled {
 				cancel()
 			}

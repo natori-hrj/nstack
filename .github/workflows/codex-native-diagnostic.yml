@@ -19,6 +19,14 @@ jobs:
         with:
           go-version: "1.27.4"
           cache: false
+      - name: Observe unprivileged lifecycle capabilities
+        shell: bash
+        run: |
+          cat /proc/self/cgroup /sys/fs/cgroup/cgroup.controllers
+          cg="$(cut -d: -f3 /proc/self/cgroup)"
+          if test -w "/sys/fs/cgroup$cg"; then echo 'current cgroup writable'; else echo 'current cgroup not delegated'; fi
+          systemd-run --user --quiet --wait --pipe --collect -p Delegate=yes /bin/sh -ec 'cg=$(cut -d: -f3 /proc/self/cgroup); test -w /sys/fs/cgroup"$cg"; mkdir /sys/fs/cgroup"$cg"/probe; test -w /sys/fs/cgroup"$cg"/probe/cgroup.kill; rmdir /sys/fs/cgroup"$cg"/probe' || echo 'no demonstrated unprivileged systemd delegation'
+          unshare --user --map-root-user --pid --mount --fork /bin/true || echo 'direct unprivileged PID namespace startup unavailable'
       - name: Try the Ubuntu packaged restricted Bubblewrap policy
         shell: bash
         run: |
@@ -69,7 +77,8 @@ jobs:
           sudo apparmor_parser --replace "$root/nstack-bwrap.profile"
           test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
           "$helper" --unshare-user --unshare-pid --unshare-net --ro-bind / / --proc /proc -- /bin/cat /proc/self/attr/current
-          ln -s "$helper" "$root/bin/bwrap"
+          sudo apparmor_parser --replace /usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          ln -s /usr/bin/bwrap "$root/bin/bwrap"
           ln -s "$(command -v git)" "$root/bin/git"
           "$root/bin/codex" --version
           "$root/codex-resources/bwrap" --version

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -33,6 +34,13 @@ func installProtocolDouble(t *testing.T) {
 // TestMain dispatches only the test binary installed as the fixture executable.
 // The double simulates protocol claims; native_test.go probes real enforcement.
 func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == SupervisorArgument {
+		if err := Supervise(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if filepath.Base(os.Args[0]) == "codex" {
 		runProtocolDouble()
 		os.Exit(0)
@@ -170,6 +178,7 @@ func runProtocolDouble() {
 			switch scenario {
 			case "turn-eof", "turn-hang":
 				child := exec.Command("/bin/sleep", "30")
+				child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 				err := child.Start()
 				fixtureCheck(err == nil, "start child: %v", err)
 				fixtureWrite(os.Getenv("NSTACK_TEST_CHILD_PID"), fmt.Sprint(child.Process.Pid))
