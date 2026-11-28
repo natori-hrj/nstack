@@ -56,6 +56,14 @@ Preflight checks effective settings, authentication, advertised model and effort
 
 Delivery resolves one effective Git push destination and rejects an unverified remote HEAD. PR delivery requires the reviewed SHA range to match the PR merge base and head. Fetch the current base branch before running when that revision is missing locally. A changes-requested verdict in review-only mode exits nonzero and records `changes_requested` in `status.json`. The full distribution quality gate also requires PyYAML for skill frontmatter checks.
 
+### Go host adapter
+
+Build with `go build -o nstack-codex ./cmd/nstack-codex` from this checkout (Go 1.22+, Linux). The Go command uses Codex CLI 0.172.0 and requires an existing ChatGPT OAuth login. Run `nstack-codex review` with the review arguments above, including the literal `--` before the gate command. `nstack-codex check-role <installed-role.toml> < model-list.json` checks advertised role capabilities using the same input as the Python command.
+
+`python3 -B tests/go_compatibility.py` replays the shared workflow, role and app-server fixtures without credentials. `NSTACK_CODEX_NATIVE_TEST=offline go test -v ./internal/codex -run '^TestNativeOffline'` exercises native Codex without credentials. The separate `NSTACK_CODEX_NATIVE_TEST=oauth go test -v ./internal/codex -run '^TestNativeOAuth$'` smoke requires authorization to use the existing OAuth account and runs Sol and Astra on disposable data.
+
+The build vendors the TOML parser; its MIT notice is in [vendor/github.com/BurntSushi/toml/COPYING](../vendor/github.com/BurntSushi/toml/COPYING).
+
 ## Review an existing candidate before editing
 
 Use `--review-first` from a clean checkout to gate and review its current commit. A first-pass approval creates no work branch. Before dispatching a writer, the controller checks the authorized work ref and, if delivery was requested, the effective remote default branch, delivery ref, starting SHA and PR. Fresh review assesses every previous finding ID as `resolved`, `recurring` or `uncertain` while independently discovering new defects. Recurrence, uncertainty and missing assessments stop further remediation. Because semantic matching can be imperfect, the hard maximum remains two rounds. Every review preserves its raw response and candidate/base SHA. Delivery rechecks the remote and PR before fast-forwarding; remote branch protections remain necessary for races at the server.

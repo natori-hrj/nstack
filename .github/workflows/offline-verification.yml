@@ -58,7 +58,7 @@ jobs:
               CGO_ENABLED=1 CC=gcc "$@"
           }
           offline go version
-          unformatted="$(offline gofmt -l internal/workflow tests/fixtures/go-review)"
+          unformatted="$(offline gofmt -l cmd internal tests/fixtures/go-review)"
           if [ -n "$unformatted" ]; then
             printf 'Files requiring gofmt:\n%s\n' "$unformatted" >&2
             exit 1

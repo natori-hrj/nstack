@@ -109,7 +109,11 @@ func main() {
 		os.Exit(2)
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	result := workflow.RunCLI(ctx, os.Args[3:], os.Stdout, os.Stderr, func(timeout time.Duration) (workflow.Adapter, error) {
+	defaults := workflow.RoleDefaults{
+		Writer:   workflow.Role{Model: "gpt-6.2-sol", Effort: "medium"},
+		Reviewer: workflow.Role{Model: "gpt-6.2-astra", Effort: "medium"},
+	}
+	result := workflow.RunCLI(ctx, os.Args[3:], os.Stdout, os.Stderr, defaults, func(timeout time.Duration) (workflow.Adapter, error) {
 		return fixture{os.Args[1], os.Args[2], timeout}, nil
 	})
 	cancel()

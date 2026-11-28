@@ -37,7 +37,12 @@ type options struct {
 	prNumber           int
 }
 
-func parse(args []string, help io.Writer) (options, error) {
+// RoleDefaults supplies harness-specific model IDs and reasoning defaults.
+type RoleDefaults struct {
+	Writer, Reviewer Role
+}
+
+func parse(args []string, help io.Writer, defaults RoleDefaults) (options, error) {
 	o := options{writer: Role{Name: "nstack_implement"}, reviewer: Role{Name: "nstack_review"}, remediations: 2}
 	flags := flag.NewFlagSet("review", flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -49,10 +54,10 @@ func parse(args []string, help io.Writer) (options, error) {
 	flags.StringVar(&o.brief, "brief", "", "Task brief")
 	flags.StringVar(&o.evidence, "evidence", "", "New directory outside checkout")
 	flags.StringVar(&o.workRef, "work-ref", "", "Authorize a new local refs/heads/ branch")
-	flags.StringVar(&o.writer.Model, "implement-model", "gpt-6.2-sol", "Writer model")
-	flags.StringVar(&o.writer.Effort, "implement-effort", "medium", "Writer reasoning effort")
-	flags.StringVar(&o.reviewer.Model, "review-model", "gpt-6.2-astra", "Reviewer model")
-	flags.StringVar(&o.reviewer.Effort, "review-effort", "medium", "Reviewer reasoning effort")
+	flags.StringVar(&o.writer.Model, "implement-model", defaults.Writer.Model, "Writer model")
+	flags.StringVar(&o.writer.Effort, "implement-effort", defaults.Writer.Effort, "Writer reasoning effort")
+	flags.StringVar(&o.reviewer.Model, "review-model", defaults.Reviewer.Model, "Reviewer model")
+	flags.StringVar(&o.reviewer.Effort, "review-effort", defaults.Reviewer.Effort, "Reviewer reasoning effort")
 	timeout := 600
 	decimal := func(name, usage string, target *int) {
 		flags.Func(name, usage, func(value string) error {
@@ -176,8 +181,8 @@ func resolvePath(path string) (string, error) {
 
 // RunCLI owns validation, exit codes and the terminal evidence record. No
 // production adapter is selected implicitly by the core.
-func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, factory AdapterFactory) int {
-	o, err := parse(args, stdout)
+func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer, defaults RoleDefaults, factory AdapterFactory) int {
+	o, err := parse(args, stdout, defaults)
 	if errors.Is(err, flag.ErrHelp) {
 		return 0
 	}
