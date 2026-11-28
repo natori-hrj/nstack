@@ -73,6 +73,17 @@ func Supervise(argv []string) error {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM, os.Interrupt)
 	defer signal.Stop(signals)
+	// Do not inherit SIG_IGN for SIGCHLD: Linux would discard wait status.
+	childSignals := make(chan os.Signal, 1)
+	signal.Notify(childSignals, syscall.SIGCHLD)
+	defer signal.Stop(childSignals)
+	select {
+	case <-stop:
+		return nil
+	case <-signals:
+		return nil
+	default:
+	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -118,6 +129,9 @@ func prepareSubreaper() error {
 	}
 	if err := childFD(fd); !errors.Is(err, syscall.ECHILD) {
 		return fmt.Errorf("unexpected waitid on supervisor (want ECHILD): %v", err)
+	}
+	if _, err := os.ReadFile("/proc/thread-self/children"); err != nil {
+		return fmt.Errorf("inspect supervisor children: %w", err)
 	}
 	const setChildSubreaper = 36 // PR_SET_CHILD_SUBREAPER
 	_, _, errno := syscall.Syscall6(syscall.SYS_PRCTL, setChildSubreaper, 1, 0, 0, 0, 0)

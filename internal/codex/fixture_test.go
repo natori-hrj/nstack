@@ -34,6 +34,13 @@ func installProtocolDouble(t *testing.T) {
 // TestMain dispatches only the test binary installed as the fixture executable.
 // The double simulates protocol claims; native_test.go probes real enforcement.
 func TestMain(m *testing.M) {
+	if len(os.Args) == 4 && os.Args[1] == lifecycleFixtureArgument {
+		if err := runLifecycleFixture(os.Args[2], os.Args[3]); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if len(os.Args) > 1 && os.Args[1] == SupervisorArgument {
 		if err := Supervise(os.Args[2:]); err != nil {
 			fmt.Fprintln(os.Stderr, err)
@@ -183,6 +190,12 @@ func runProtocolDouble() {
 				fixtureCheck(err == nil, "start child: %v", err)
 				fixtureWrite(os.Getenv("NSTACK_TEST_CHILD_PID"), fmt.Sprint(child.Process.Pid))
 				if scenario == "turn-eof" {
+					for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+						if _, err := os.Stat(os.Getenv("NSTACK_TEST_CHILD_PID") + ".exit"); err == nil {
+							break
+						}
+						time.Sleep(5 * time.Millisecond)
+					}
 					os.Exit(7)
 				}
 				time.Sleep(30 * time.Second)

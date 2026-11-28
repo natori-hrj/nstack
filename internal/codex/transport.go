@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 	"unicode/utf8"
 )
 
@@ -44,6 +45,9 @@ func startServer(ctx context.Context, cwd, evidence string, overrides ...string)
 	)
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if os.Getenv("CODEX_EXEC_SERVER_URL") != "" {
+		return nil, errors.New("Codex requires local supervised execution; CODEX_EXEC_SERVER_URL must be unset")
 	}
 	codexPath, err := exec.LookPath("codex")
 	if err != nil {
@@ -110,8 +114,20 @@ func startServer(ctx context.Context, cwd, evidence string, overrides ...string)
 	wait := sync.OnceValue(func() error {
 		disarm()
 		stop()
-		err := cmd.Wait()
-		_ = log.Close()
+		done := make(chan error, 1)
+		go func() {
+			err := cmd.Wait()
+			_ = log.Close()
+			done <- err
+		}()
+		var err error
+		select {
+		case err = <-done:
+		case <-time.After(cleanupTimeout + time.Second):
+			// Killing the supervisor here could orphan the very processes
+			// it is draining. Report unconfirmed cleanup instead.
+			err = errors.New("supervisor did not acknowledge shutdown")
+		}
 		if err != nil {
 			return fmt.Errorf("Codex descendant cleanup not confirmed (%s): %w", log.Name(), err)
 		}

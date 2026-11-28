@@ -42,6 +42,8 @@ Native custom agents can select a configured model and return results to their p
 
 Run `nstack review` from an authorized host with Git, Codex CLI 0.172.0, and an existing ChatGPT OAuth login. Use an exclusive, clean feature checkout and a task brief containing observable acceptance criteria. The host must be able to write Codex's runtime state and start its normal sandbox. The adapter uses the normal Codex home and credential store. It reads the effective MCP configuration for each checkout, applies process-local Codex `-c` overrides, and verifies that every MCP server is disabled before dispatch. User and project files are preserved. Apps, plugins, hooks, memories, web search and native delegation are disabled for these child processes. The Codex sandbox restricts writes and network, and can allow reads outside the checkout. Use a separate restricted host account if you need stronger filesystem read isolation.
 
+Native review requires Linux pidfds (including `waitid(P_PIDFD)`, available since Linux 5.4), subreaper support, and a procfs view of the current PID namespace with per-thread `children` files. Leave `CODEX_EXEC_SERVER_URL` unset so Codex executes locally within the managed process tree. The supervisor stops and reaps descendants before confirming teardown; missing capabilities or unconfirmed cleanup block the workflow and leave diagnostics in the stage's `.stderr` file. This requires neither root privileges nor cgroup delegation.
+
 ```sh
 nstack review --authorize-host \
   --work-ref refs/heads/nstack-work-example \
