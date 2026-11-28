@@ -185,13 +185,15 @@ func runProtocolDouble() {
 			switch scenario {
 			case "turn-eof", "turn-hang":
 				child := exec.Command("/bin/sleep", "30")
+				pidFile := os.Getenv("NSTACK_TEST_CHILD_PID")
+				child.Args[0] = pidFile // Unique argv[0] for emergency test cleanup.
 				child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 				err := child.Start()
 				fixtureCheck(err == nil, "start child: %v", err)
-				fixtureWrite(os.Getenv("NSTACK_TEST_CHILD_PID"), fmt.Sprint(child.Process.Pid))
+				fixtureWrite(pidFile, fmt.Sprint(child.Process.Pid))
 				if scenario == "turn-eof" {
 					for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
-						if _, err := os.Stat(os.Getenv("NSTACK_TEST_CHILD_PID") + ".exit"); err == nil {
+						if _, err := os.Stat(pidFile + ".exit"); err == nil {
 							break
 						}
 						time.Sleep(5 * time.Millisecond)

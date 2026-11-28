@@ -254,6 +254,11 @@ func TestNativeOfflineCancellation(t *testing.T) {
 		}
 	}
 	fd := trackFixtureProcess(t, pid)
+	armFixtureCleanup(t, fd, pid, func() bool {
+		want, wantErr := os.Stat(probe)
+		actual, actualErr := os.Stat(fmt.Sprintf("/proc/%d/exe", pid))
+		return wantErr == nil && actualErr == nil && os.SameFile(want, actual)
+	})
 	cancel()
 	outcome := <-done
 	if !errors.Is(outcome.commandErr, context.Canceled) || outcome.cleanupErr != nil {

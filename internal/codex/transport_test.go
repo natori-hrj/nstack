@@ -72,6 +72,7 @@ func TestTurnTeardown(t *testing.T) {
 				t.Fatal(err)
 			}
 			fd := trackFixtureProcess(t, pid)
+			armFixtureArgCleanup(t, fd, pid, pidFile)
 			if test.want == nil {
 				fixtureWrite(pidFile+".exit", "")
 			}
@@ -104,7 +105,7 @@ func TestCancelledGateStopsChild(t *testing.T) {
 	go func() {
 		result, err := a.Gate(ctx, workflow.GateRequest{
 			Directory: checkout, Scratch: scratch, Evidence: filepath.Join(scratch, "gate"),
-			Argv: []string{"/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; exec /bin/sleep 30`, "gate", pidFile},
+			Argv: []string{"/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; /bin/sleep 30`, "gate", pidFile},
 		})
 		if err == nil && result.ExitCode != nil {
 			err = fmt.Errorf("cancelled gate returned terminal code %d", *result.ExitCode)
@@ -116,6 +117,7 @@ func TestCancelledGateStopsChild(t *testing.T) {
 		t.Fatal(err)
 	}
 	fd := trackFixtureProcess(t, pid)
+	armFixtureArgCleanup(t, fd, pid, pidFile)
 	cancel()
 	cancel()
 	if err := <-done; !errors.Is(err, context.Canceled) {

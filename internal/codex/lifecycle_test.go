@@ -23,12 +23,34 @@ func trackFixtureProcess(t *testing.T, pid int) int {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		// Emergency cleanup only. pidfd retains this exact process identity.
-		_ = signalProcessFD(fd, syscall.SIGKILL)
-		_ = syscall.Close(fd)
-	})
+	t.Cleanup(func() { _ = syscall.Close(fd) })
 	return fd
+}
+
+func fixtureFDNamesPID(fd, pid int) bool {
+	info, err := os.ReadFile(fmt.Sprintf("/proc/self/fdinfo/%d", fd))
+	return err == nil && strings.Contains(string(info), fmt.Sprintf("\nPid:\t%d\n", pid))
+}
+
+// Emergency cleanup only. A PID read from an old marker is not sufficient.
+// Check this test's unique fixture identity while the retained fd still names
+// the PID, then use the fd itself for the signal. If identity is uncertain,
+// leave the fixture to its own short deadline.
+func armFixtureCleanup(t *testing.T, fd, pid int, matches func() bool) {
+	t.Helper()
+	t.Cleanup(func() {
+		if fixtureFDNamesPID(fd, pid) && matches() && fixtureFDNamesPID(fd, pid) {
+			_ = signalProcessFD(fd, syscall.SIGKILL)
+		}
+	})
+}
+
+func armFixtureArgCleanup(t *testing.T, fd, pid int, uniqueArg string) {
+	t.Helper()
+	armFixtureCleanup(t, fd, pid, func() bool {
+		data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+		return err == nil && strings.Contains("\x00"+string(data), "\x00"+uniqueArg+"\x00")
+	})
 }
 
 func assertReaped(t *testing.T, fd int) {
@@ -44,6 +66,25 @@ func TestPidfdRejectsNonChild(t *testing.T) {
 	// pidfd_open succeeds, its caller must not signal a non-child.
 	if err := stopChild(os.Getpid()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestEmergencyCleanupRejectsUnrelatedFixture(t *testing.T) {
+	child := exec.Command("/bin/sleep", "15")
+	if err := child.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = child.Process.Kill()
+		_ = child.Wait()
+	}()
+	t.Run("different identity", func(t *testing.T) {
+		pid := child.Process.Pid
+		fd := trackFixtureProcess(t, pid)
+		armFixtureArgCleanup(t, fd, pid, filepath.Join(t.TempDir(), "not-this-process"))
+	})
+	if pid, err := syscall.Wait4(child.Process.Pid, nil, syscall.WNOHANG, nil); err != nil || pid != 0 {
+		t.Fatalf("unrelated process exited: pid=%d err=%v", pid, err)
 	}
 }
 
@@ -166,6 +207,7 @@ func TestSupervisorReapsDescendants(t *testing.T) {
 					}
 					pids[node] = pid
 					nodes[node] = trackFixtureProcess(t, pid)
+					armFixtureArgCleanup(t, nodes[node], pid, dir)
 				}
 			}
 			switch mode {
