@@ -8,7 +8,34 @@ permissions:
   contents: read
 
 jobs:
+  common:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.14"
+      - name: Verify exact PR head with no harness on PATH
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
+          isolated="$(mktemp -d "$RUNNER_TEMP/nstack-common.XXXXXX")"
+          mkdir "$isolated/bin" "$isolated/home" "$isolated/tmp"
+          for command in git python3; do
+            ln -s "$(command -v "$command")" "$isolated/bin/$command"
+          done
+          env -i HOME="$isolated/home" PATH="$isolated/bin" TMPDIR="$isolated/tmp" \
+            GIT_CONFIG_NOSYSTEM=1 PYTHONUTF8=1 \
+            "$isolated/bin/python3" -B tests/validate.py --suite common
   validate:
+    needs: common
+    if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
@@ -16,6 +43,10 @@ jobs:
       CODEX_VERSION: "0.172.0"
       CODEX_ARCHIVE_SHA256: a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392
     steps:
+      - name: Require common verification
+        env:
+          COMMON_RESULT: ${{ needs.common.result }}
+        run: test "$COMMON_RESULT" = success
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -52,6 +83,6 @@ jobs:
             printf '\n- PR head: `%s`\n- Codex: `%s`\n' "$actual_sha" "$cli_version"
             printf -- '- Python: `%s`\n- Git: `%s`\n' "$(python3 --version)" "$(git --version)"
             printf -- '- PyYAML: `%s`\n' "$(python3 -c 'import yaml; print(yaml.__version__)')"
-            echo '- Evidence: native Codex discovery and configuration checks, plus local Git and provider protocol fixtures. Zero authenticated model turns.'
+            echo '- Evidence: native Codex offline discovery and configuration plus Codex protocol fixtures. Zero authenticated model turns.'
           } | tee -a "$GITHUB_STEP_SUMMARY"
-          python3 tests/validate.py
+          python3 tests/validate.py --suite codex

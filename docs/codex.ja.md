@@ -18,7 +18,7 @@ CLI 0.172.0 のヘルプには管理 worktree 用の `--worktree` もありま�
 
 ## 検証と測定
 
-オフライン検証は、Codex app-server の `skills/list`、マニフェストとモデル TOML の構文、独立したチェックアウトでの再現、2件の並列処理による隔離、親 HEAD とリモートの状態を確認します。並行ワーカーは決定的な Python fixture です。任意の停止判断や本番 CI はワークフローの指示に従います。
+`python3 tests/validate.py` は全オフライン検証を実行します。`--suite common` は Codex 不要で、スキル一覧、Git、共通ワークフローを確認します。`--suite codex` はマニフェストとモデル TOML、ネイティブの検出・設定、Codex プロトコルの fixture を確認します。並行ワーカーは決定的な Git fixture であり、実際のエージェントの権限境界を検証するものではありません。
 
 ライブでは CLI の明示的な `-m` で3モデルそれぞれが応答を完了しました。これは要求したモデル名で CLI リクエストが成功した証拠です。バックエンドの実体を独立に識別する証拠はありません。リリース前の追加検証では、ユーザー用 agents ディレクトリからネイティブのロール名を指定し、Sol と Astra の応答とセッション記録のモデル名を確認しました。Daybreak Blue は、一時環境でプログラムを指定しなかったときに `access_programs.cyber=daybreak_blue` を要求されました。認証済みの Codex の `model/list` で対象モデルの `availableAccessPrograms.cyber` に `daybreakBlue` があることを確認し、CLI 0.172.0 の `--cyber-access-program daybreak_blue` を指定した読み取り専用セッションで、ネイティブの `pstack_security` がモデル上書きなしで応答することを確認しました。アクセスプログラムの選択は利用権限を付与しません。権限が確認できない場合はそのロールの作業を止めます。
 

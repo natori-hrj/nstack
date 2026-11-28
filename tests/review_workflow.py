@@ -358,6 +358,7 @@ if __name__ == "__main__":
     with TemporaryDirectory(prefix="nstack-review-test-") as temporary:
         root = Path(temporary)
         verify_real_config(root)
+        print("Codex native offline: effective MCP configuration verified", flush=True)
         fake_bin = root / "bin"
         fake_bin.mkdir()
         command = fake_bin / "codex"
@@ -410,4 +411,4 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "budget", "remediation budget exhausted", budget=0)
         exercise(root, fake_bin, "dirty", "dirty checkout")
         exercise(root, fake_bin, "gate", "quality gate failed", gated=False)
-    print("host review CLI: remediation, exact SHA push and fail-closed protocol cases verified")
+    print("Codex protocol fixtures: remediation, exact SHA push and fail-closed cases verified")
