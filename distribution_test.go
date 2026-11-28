@@ -10,7 +10,8 @@ import (
 )
 
 func TestBundledAssets(t *testing.T) {
-	paths, err := exec.Command("git", "ls-files", "-z", "--", "skills", "adapters", "docs", "examples/agents",
+	paths, err := exec.Command("git", "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--",
+		"skills", "adapters", "docs", "examples/agents",
 		"LICENSE", "LICENSE-upstream", "README.md", "README.ja.md", manifest).Output()
 	if err != nil {
 		t.Fatal(err)

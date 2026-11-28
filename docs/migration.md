@@ -2,7 +2,7 @@
 
 ## From pstack-codex v0.1.0
 
-[日本語](migration.ja.md) · [Quick start](../README.md)
+[日本語](migration.ja.md) · [Installation](../README.md)
 
 nstack replaces `$poteto-mode` with `$natori-mode`, `$setup-pstack` with `$setup-nstack`, and the three `pstack_*` agent names with `nstack_*`. The 24 other skill names are shared. Keep only one distribution active in any session.
 
@@ -22,7 +22,7 @@ nstack replaces `$poteto-mode` with `$natori-mode`, `$setup-pstack` with `$setup
 ## Native plugin installation
 
 1. Close active sessions. Run `codex plugin remove pstack-codex@<marketplace>` using the exact selector from the inventory. Keep the old marketplace registration and source for rollback. Move any old direct skill copies out of discovery using the backup step above. This also applies to a mixed installation.
-2. [Register the nstack marketplace and install `nstack@nstack-local`](skills.md#other-installation-options). Use a separate checkout or marketplace root from the saved old one. Plugin commands update marketplace and enablement entries through Codex.
+2. [Register the nstack marketplace and install `nstack@nstack-local`](skills.md#other-codex-installation-options). Use a separate checkout or marketplace root from the saved old one. Plugin commands update marketplace and enablement entries through Codex.
 3. Move the old custom agent TOMLs and old direct-install license files to the backup. Install the new agent files separately and transfer model settings as in the direct path. The plugin supplies the skills and licenses. Start a new session, check for `$nstack:natori-mode` and `$nstack:setup-nstack`, and verify your model settings. Update prompts that use the old plugin namespace. During plugin rollback, use the restored `pstack-codex:` namespace.
 
 ## Roll back
@@ -31,10 +31,14 @@ Close Codex sessions. If the destination uses the nstack plugin, remove `nstack@
 
 ## Upgrade to v0.3.0
 
-For a managed direct install, record the active target with `readlink "$config_dir/skills/nstack-managed"`. From a clean candidate checkout, use the [quick start](../README.md) to stage the new SHA. Staging leaves discovery and roles intact. Activate in a disposable Codex home first and verify discovery there. When ready, close existing sessions, activate in the intended home, and verify in a fresh session. To roll back, run `install.py --home "$config_dir" activate <previous-snapshot-id>` using the same script path as in the quick start. Snapshots retain both MIT notices and the role examples. Keep prior snapshots for rollback.
+For the historical Python release, see the [v0.3.0 instructions](v0.3.0.md). Keep prior snapshots for rollback.
 
 With the [standalone binary](../README.md#standalone-go-binary), use `nstack install --home "$config_dir" stage <new-id>` and `nstack install --home "$config_dir" activate <snapshot-id>` for activation and rollback. This uses the same state and lock as the Python reference procedure above. Role examples remain in the staged `examples/agents` directory; existing installed role TOMLs are not replaced.
 
 For old direct copies, stage alongside the installation. After verifying the candidate in a disposable home, back up old skill directories by moving them out of all search paths, then activate the new snapshot. To roll back to the legacy layout, move the managed symlink out of discovery and restore the saved directories. For old plugins, preserve their source and selector, then disable them before activating direct skills. Restore their original selector for a plugin rollback.
 
 Manage agent TOMLs independently of skills. Inspect your existing `nstack_security` TOML, since v0.2.0 shipped a Daybreak assignment. Back it up before switching to the new standard example. Apply your intended custom model and effort settings separately. Restore the backup for role rollback. Check project and plugin scopes for duplicate skill and role names before activation.
+
+## From a Python-managed nstack installation to v0.4.0
+
+Keep the same Codex home, active link, previous snapshots and customized role TOMLs. Record the active target before updating. Use `nstack install --home "$config_dir" stage <new-id>` and then `activate <new-id>`; to roll back, activate the recorded previous ID. The tools share the same snapshot store and lock. Go checks all bytes of sealed Go snapshots; older Python snapshots have no seal, so activation validates required files and skill metadata/instructions instead. Do not restage a different release under the same ID. A separate [OpenCode installation](opencode.md) does not edit the Codex home.

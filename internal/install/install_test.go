@@ -2,9 +2,11 @@ package install
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,6 +17,80 @@ import (
 
 	"github.com/natori-hrj/nstack"
 )
+
+func TestOpenCodeLifecycle(t *testing.T) {
+	root := t.TempDir()
+	codex := filepath.Join(root, "codex")
+	opencode := filepath.Join(root, "opencode")
+	files := fixtureAssets(t)
+	apply(t, codex, "stage", "codex", files)
+	apply(t, codex, "activate", "codex", files)
+	if err := os.MkdirAll(filepath.Join(opencode, "skills"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(opencode, "opencode.jsonc")
+	settings := []byte("{ /* user configuration */ }\n")
+	if err := os.WriteFile(config, settings, 0600); err != nil {
+		t.Fatal(err)
+	}
+	install := func(action, id string, want int) {
+		t.Helper()
+		var out, stderr bytes.Buffer
+		if code := RunCLI([]string{"--harness", "opencode", "--home", opencode, action, id}, &out, &stderr); code != want {
+			t.Fatalf("%s %s: exit %d, want %d: %s", action, id, code, want, &stderr)
+		}
+	}
+	install("stage", "first", 0)
+	if _, err := os.Lstat(filepath.Join(opencode, "skills", activeLink)); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("staging changed discovery: %v", err)
+	}
+	install("activate", "first", 0)
+	install("stage", "second", 0)
+	flat := filepath.Join(opencode, "skills", "natori-mode.md")
+	if err := os.WriteFile(flat, []byte("user-owned collision"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	install("activate", "second", 1)
+	active(t, opencode, "first")
+	if got, err := os.ReadFile(flat); err != nil || string(got) != "user-owned collision" {
+		t.Fatalf("collision changed: %q, %v", got, err)
+	}
+	if err := os.Remove(flat); err != nil {
+		t.Fatal(err)
+	}
+	install("activate", "second", 0)
+	install("activate", "second", 0)
+	active(t, opencode, "second")
+	install("activate", "first", 0)
+	active(t, opencode, "first")
+	active(t, codex, "codex")
+	if got, err := os.ReadFile(config); err != nil || !bytes.Equal(got, settings) {
+		t.Fatalf("user configuration changed: %q, %v", got, err)
+	}
+}
+
+func TestRollbackToSealedPreviousRelease(t *testing.T) {
+	home := t.TempDir()
+	current := fixtureAssets(t)
+	previous := maps.Clone(current)
+	for path := range previous {
+		if rollbackOptionalDoc(path, true) {
+			delete(previous, path)
+		}
+	}
+	apply(t, home, "stage", "previous", previous)
+	newSnapshot := apply(t, home, "stage", "current", current)
+	apply(t, home, "activate", "current", current)
+	apply(t, home, "activate", "previous", current)
+	active(t, home, "previous")
+	if err := os.Remove(filepath.Join(newSnapshot, "docs", "opencode.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := run(home, "activate", "current", current, nil, false); err == nil {
+		t.Fatal("accepted a sealed snapshot with a deleted file")
+	}
+	active(t, home, "previous")
+}
 
 func fixtureAssets(t *testing.T) map[string][]byte {
 	t.Helper()
@@ -27,7 +103,7 @@ func fixtureAssets(t *testing.T) map[string][]byte {
 
 func apply(t *testing.T, home, action, id string, files map[string][]byte) string {
 	t.Helper()
-	path, err := run(home, action, id, files, nil)
+	path, err := run(home, action, id, files, nil, false)
 	if err != nil {
 		t.Fatalf("%s %s: %v", action, id, err)
 	}
@@ -59,7 +135,7 @@ func TestInstallerChild(t *testing.T) {
 				var ignored [1]byte
 				os.Stdin.Read(ignored[:])
 			}
-		})
+		}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +249,7 @@ func TestPublicationDoesNotOverwrite(t *testing.T) {
 			if err := os.Mkdir(target, 0700); err != nil {
 				t.Fatal(err)
 			}
-		})
+		}, false)
 		if !errors.Is(err, fs.ErrExist) {
 			t.Fatalf("stage should fail on competing destination: %v", err)
 		}
@@ -202,7 +278,7 @@ func TestPublicationDoesNotOverwrite(t *testing.T) {
 				if err := os.WriteFile(target, []byte("user-owned"), 0600); err != nil {
 					t.Fatal(err)
 				}
-			})
+			}, false)
 			if err == nil {
 				t.Fatal("activation should reject a competing destination")
 			}
@@ -224,7 +300,7 @@ func TestPublicationRejectsReplacedParent(t *testing.T) {
 		if err := os.Symlink(outside, parent); err != nil {
 			t.Fatal(err)
 		}
-	})
+	}, false)
 	if err == nil || !strings.Contains(err.Error(), "paths changed") {
 		t.Fatalf("replaced parent should fail closed: %v", err)
 	}
@@ -244,7 +320,7 @@ func TestRejectIncompleteAndRedirected(t *testing.T) {
 	if err := os.Remove(filepath.Join(path, "LICENSE-upstream")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := run(home, "activate", "new", files, nil); err == nil || !strings.Contains(err.Error(), "incomplete snapshot") {
+	if _, err := run(home, "activate", "new", files, nil, false); err == nil || !strings.Contains(err.Error(), "incomplete snapshot") {
 		t.Fatalf("incomplete snapshot accepted: %v", err)
 	}
 	active(t, home, "old")
@@ -259,7 +335,7 @@ func TestRejectIncompleteAndRedirected(t *testing.T) {
 			if err := os.Symlink(outside, target); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := run(other, "stage", "new", files, nil); err == nil {
+			if _, err := run(other, "stage", "new", files, nil, false); err == nil {
 				t.Fatal("installer accepted a redirected managed path")
 			}
 			if entries, err := os.ReadDir(outside); err != nil || len(entries) != 0 {
@@ -268,7 +344,7 @@ func TestRejectIncompleteAndRedirected(t *testing.T) {
 		})
 	}
 	for _, id := range []string{"../escape", "nested/x", "é", ".", "..", ".staging", "/absolute"} {
-		if _, err := run(home, "stage", id, files, nil); err == nil {
+		if _, err := run(home, "stage", id, files, nil, false); err == nil {
 			t.Errorf("accepted invalid snapshot ID %q", id)
 		}
 	}
@@ -334,7 +410,7 @@ func TestRejectDamagedSnapshots(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(snapshot, test.path), []byte(test.replacement), 0644); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := run(home, "activate", "new", files, nil); err == nil {
+			if _, err := run(home, "activate", "new", files, nil, false); err == nil {
 				t.Fatal("corrupted snapshot was accepted")
 			}
 			active(t, home, "old")

@@ -1,4 +1,4 @@
-// Package install stages and activates managed Codex snapshots on Linux.
+// Package install stages and activates managed workflow snapshots on Linux.
 package install
 
 import (
@@ -24,8 +24,11 @@ const activeLink = "nstack-managed"
 func RunCLI(args []string, out, stderr io.Writer) int {
 	flags := flag.NewFlagSet("install", flag.ContinueOnError)
 	flags.SetOutput(stderr)
-	home := flags.String("home", "", "Explicit Codex home")
-	flags.Usage = func() { fmt.Fprintln(stderr, "usage: install --home PATH {stage|activate} SNAPSHOT") }
+	home := flags.String("home", "", "Explicit harness configuration directory")
+	harness := flags.String("harness", "codex", "Skill discovery layout (codex or opencode)")
+	flags.Usage = func() {
+		fmt.Fprintln(stderr, "usage: install [--harness codex|opencode] --home PATH {stage|activate} SNAPSHOT")
+	}
 	var position []string
 	for len(args) != 0 && len(position) <= 2 {
 		err := flags.Parse(args)
@@ -50,10 +53,14 @@ func RunCLI(args []string, out, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "invalid snapshot identifier")
 		return 2
 	}
+	if *harness != "codex" && *harness != "opencode" {
+		fmt.Fprintln(stderr, "unsupported install harness: expected codex or opencode")
+		return 2
+	}
 	assets, err := distribution.Bundled()
 	if err == nil {
 		var path string
-		path, err = run(*home, action, id, assets.Files, nil)
+		path, err = run(*home, action, id, assets.Files, nil, *harness == "opencode")
 		if err == nil {
 			fmt.Fprintln(out, path)
 			return 0
@@ -73,7 +80,7 @@ func (c checkpoint) at(name string) {
 	}
 }
 
-func run(homePath, action, id string, assets map[string][]byte, observe checkpoint) (string, error) {
+func run(homePath, action, id string, assets map[string][]byte, observe checkpoint, flatSkills bool) (string, error) {
 	if !snapshotID.MatchString(id) {
 		return "", errors.New("invalid snapshot identifier")
 	}
@@ -150,7 +157,7 @@ func run(homePath, action, id string, assets map[string][]byte, observe checkpoi
 			return errors.New("snapshot changed during activation")
 		}
 		return checkAnchors()
-	}, observe)
+	}, observe, flatSkills)
 }
 
 func stage(state, snapshots directory, id string, assets map[string][]byte, check func() error, observe checkpoint) error {
@@ -306,9 +313,7 @@ func inspect(snapshot directory, assets map[string][]byte, exact bool) ([]byte, 
 		return nil, err
 	}
 	for path := range assets {
-		// This migration document was added after the published Python
-		// snapshot. It is not a rollback prerequisite.
-		if !exact && !hasSeal && path == "docs/behavior-v0.3.0.md" {
+		if !exact && rollbackOptionalDoc(path, hasSeal) {
 			continue
 		}
 		if !found[path] {
@@ -320,4 +325,17 @@ func inspect(snapshot directory, assets map[string][]byte, exact bool) ([]byte, 
 		return nil, errors.New("snapshot integrity checksum does not match")
 	}
 	return digest, nil
+}
+
+// These documents were introduced after snapshots that remain rollback targets.
+// Exact staging still requires them, and sealed snapshots still verify every byte.
+func rollbackOptionalDoc(path string, sealed bool) bool {
+	switch path {
+	case "docs/opencode.md", "docs/opencode.ja.md", "docs/releases/v0.4.0.md", "docs/releases/v0.4.0.ja.md":
+		return true
+	case "docs/behavior-v0.3.0.md":
+		return !sealed
+	default:
+		return false
+	}
 }
