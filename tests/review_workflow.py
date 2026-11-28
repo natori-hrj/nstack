@@ -62,8 +62,12 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         git(repo, "push", str(remote), f"{base}:refs/heads/feature")
         git(remote, "symbolic-ref", "HEAD", "refs/heads/feature")
         git(repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
-    if scenario in {"delivery-mismatch", "review-only-fast-forward"}:
+    if scenario in {"delivery-mismatch", "review-only-fast-forward", "delivery-ref-suffix"}:
         git(repo, "push", str(remote), f"{base}:{delivery_ref}")
+    suffix_ref = f"refs/heads/archive/{delivery_ref}"
+    if scenario == "delivery-ref-suffix":
+        git(remote, "update-ref", suffix_ref, base)
+        assert len(git(repo, "ls-remote", "--refs", str(remote), delivery_ref).splitlines()) == 2
     remote_start = git(repo, "ls-remote", "--refs", str(remote), delivery_ref)
     assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
     if scenario == "dirty":
@@ -120,7 +124,8 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         "?? user-file" if scenario == "dirty" else ""
     )
     assert git(repo, "diff", "--name-only", base, "HEAD") in ("", "result.txt")
-    remote_ref = git(repo, "ls-remote", "--refs", str(destination), delivery_ref)
+    remote_ref = "\n".join(line for line in git(repo, "ls-remote", "--refs", str(destination)).splitlines()
+                           if line.split("\t")[1] == delivery_ref)
     assert git(repo, "ls-remote", "--tags", str(destination)) == ""
     if scenario == "rewritten":
         assert git(repo, "ls-remote", "--refs", str(remote), "refs/heads/feature") == ""
@@ -191,6 +196,8 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
             assert remote_ref == ""
         else:
             assert remote_ref.split() == [initial, delivery_ref]
+        if scenario == "delivery-ref-suffix":
+            assert git(remote, "rev-parse", suffix_ref) == base
         return
     second = json.loads((evidence / "1-review.json").read_text())
     implementation = json.loads((evidence / "1-implementation.json").read_text())
@@ -244,9 +251,22 @@ def verify_pr_delivery(root):
     evidence.mkdir()
     reported_head = "another-branch"
     view_calls = []
+    open_prs = [
+        {"number": 456, "base": "main", "isCrossRepository": False},
+        {"number": 457, "base": "main", "isCrossRepository": True},
+    ]
+    other_pr = {"number": 458, "base": "release", "isCrossRepository": False}
 
     def gh(cwd, github, *command):
         assert cwd == repo and github == "github.com/fixture/project"
+        if command[0] == "list":
+            assert command[command.index("--head") + 1] == "123"
+            assert command[command.index("--state") + 1] == "open"
+            matches = open_prs
+            if "--base" in command:
+                matches = [pr for pr in matches if pr["base"] == command[command.index("--base") + 1]]
+            return json.dumps([{"number": pr["number"], "isCrossRepository": pr["isCrossRepository"]}
+                               for pr in matches])
         assert command[:2] == ("view", "456")
         remote_tip = git(remote, "rev-parse", "refs/heads/123")
         view_calls.append(remote_tip)
@@ -269,7 +289,25 @@ def verify_pr_delivery(root):
                 raise AssertionError("accepted a mismatched PR")
             assert git(remote, "rev-parse", "refs/heads/123") == start
         reported_head = "123"
+        open_prs.append(other_pr)
+        try:
+            review_workflow.Delivery(args, repo, base, start)
+        except ValueError as error:
+            assert "open PR" in str(error)
+        else:
+            raise AssertionError("accepted explicit PR delivery with another open PR on the same head")
+        open_prs.remove(other_pr)
         delivery = review_workflow.Delivery(args, repo, base, start)
+        open_prs.append(other_pr)
+        try:
+            delivery.push(candidate, evidence)
+        except ValueError as error:
+            assert "open PR" in str(error)
+        else:
+            raise AssertionError("pushed after another PR opened on the same head")
+        assert git(remote, "rev-parse", "refs/heads/123") == start
+        assert not (evidence / "delivery.json").exists()
+        open_prs.remove(other_pr)
         delivery.push(candidate, evidence)
     assert git(repo, "symbolic-ref", "HEAD") == "refs/heads/isolated"
     assert git(repo, "rev-parse", "refs/heads/123") == start
@@ -341,6 +379,7 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "review-first-blocked", "review blocked", review_first=True)
         exercise(root, fake_bin, "review-only", None, review_only=True)
         exercise(root, fake_bin, "review-only-fast-forward", None, review_only=True)
+        exercise(root, fake_bin, "delivery-ref-suffix", None, review_only=True)
         exercise(root, fake_bin, "review-only-changes", "requested changes in review-only mode", review_only=True)
         exercise(root, fake_bin, "rewritten", None)
         exercise(root, fake_bin, "detached-default", "cannot verify a non-default remote branch")

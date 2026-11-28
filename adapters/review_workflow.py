@@ -256,13 +256,7 @@ class Delivery:
             raise ValueError("delivery ref does not match the starting candidate")
         self.number = args.pr_number
         if self.github and self.number is None:
-            matches = [pr["number"] for pr in json.loads(github_pr(
-                repo, self.github, "list", "--state", "open", "--head", self.branch,
-                "--base", args.pr_base, "--json", "number,isCrossRepository",
-            )) if not pr["isCrossRepository"]]
-            if len(matches) > 1 or any(type(item) is not int or item < 1 for item in matches):
-                raise ValueError("cannot identify a unique GitHub PR for the requested branch and base")
-            self.number = matches[0] if matches else None
+            self.number = self.open_pr_number()
         self.check(start)
 
     @property
@@ -270,12 +264,15 @@ class Delivery:
         return self.ref.removeprefix("refs/heads/")
 
     def remote_ref(self, name):
-        fields = git(self.repo, "ls-remote", "--refs", "--", self.remote, name, config=self.config).split()
-        if not fields:
+        reply = git(self.repo, "ls-remote", "--refs", "--", self.remote, name, config=self.config)
+        # ls-remote patterns also match ref names with the same tail.
+        matches = [line.split("\t") for line in reply.splitlines() if line.endswith(f"\t{name}")]
+        if not matches:
             return None
-        if len(fields) != 2 or fields[1] != name or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", fields[0]):
+        if (len(matches) != 1 or len(matches[0]) != 2
+                or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", matches[0][0])):
             raise ValueError(f"cannot verify remote ref {name}")
-        return fields[0]
+        return matches[0][0]
 
     def remote_default(self):
         if self.ref in ("refs/heads/main", "refs/heads/master", "refs/heads/trunk"):
@@ -285,6 +282,20 @@ class Delivery:
         if self.ref in (default, self.pr_base_ref):
             raise ValueError("delivery ref is the remote default or PR base branch")
         return default
+
+    def open_pr_number(self):
+        limit = 100
+        # Updating the head ref updates every same-repository PR using it, across all bases.
+        prs = json.loads(github_pr(
+            self.repo, self.github, "list", "--state", "open", "--head", self.branch,
+            "--limit", str(limit), "--json", "number,isCrossRepository",
+        ))
+        if not isinstance(prs, list) or len(prs) >= limit:
+            raise ValueError("cannot verify the complete list of open PRs for the delivery branch")
+        matches = [pr["number"] for pr in prs if not pr["isCrossRepository"]]
+        if len(matches) > 1 or any(type(number) is not int or number < 1 for number in matches):
+            raise ValueError("cannot identify a unique open PR for the delivery branch")
+        return matches[0] if matches else None
 
     def check_pr(self, expected_head, candidate):
         data = json.loads(github_pr(
@@ -310,6 +321,8 @@ class Delivery:
             if base_tip is None:
                 raise ValueError("cannot verify remote PR base")
             verify_pr_base(self.repo, self.base, candidate, base_tip)
+        if self.github and self.open_pr_number() != self.number:
+            raise ValueError("open PR for the delivery branch does not match the authorized PR")
         if self.number is not None:
             if self.remote_start is None:
                 raise ValueError("existing PR requires an existing delivery ref")
