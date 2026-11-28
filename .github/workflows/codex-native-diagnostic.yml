@@ -12,6 +12,27 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c
+        with:
+          go-version: "1.27.4"
+          cache: false
+      - name: Try the Ubuntu packaged restricted Bubblewrap policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends apparmor-profiles bubblewrap
+          profile=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+          dpkg-query --search "$profile" /usr/bin/bwrap
+          dpkg-query -W apparmor-profiles bubblewrap
+          sudo apparmor_parser --replace "$profile"
+          test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
+          sudo grep -E '^(bwrap|unpriv_bwrap) ' /sys/kernel/security/apparmor/profiles
+          /usr/bin/bwrap --unshare-user --unshare-pid --unshare-net --ro-bind / / --proc /proc -- /bin/cat /proc/self/attr/current
       - name: Reproduce Codex sandbox startup without credentials
         shell: bash
         run: |
@@ -39,6 +60,8 @@ jobs:
           fetch codex a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392 bin/codex
           fetch codex-exec-server 1276ea8882a5c96fbc35fdb57c169198fe95f845dab0be864a8a0bc026efa8d5 bin/codex-exec-server
           fetch bwrap e3968d3fdca4d9e078c118a52b2d0d76c7b55a03fc012cc210c544e9e60561d8 codex-resources/bwrap
+          ln -s /usr/bin/bwrap "$root/bin/bwrap"
+          ln -s "$(command -v git)" "$root/bin/git"
           "$root/bin/codex" --version
           "$root/codex-resources/bwrap" --version
           stat -c '%a %U:%G %n' "$root"/bin/* "$root/codex-resources/bwrap"
@@ -47,6 +70,7 @@ jobs:
           "$root/codex-resources/bwrap" --unshare-user --unshare-pid --unshare-net --ro-bind / / --proc /proc -- /bin/true
           printf 'Bundled bwrap startup exit=%s\n' "$?"
           set -e
+          (
           cd "$root/checkout"
           coproc APP { env -i HOME="$root/home" CODEX_HOME="$root/home" PATH="$root/bin" \
             "$root/bin/codex" app-server --listen stdio://; }
@@ -62,4 +86,10 @@ jobs:
             fi
           done
           if test -e must-not-exist; then echo 'Write target exists'; else echo 'Write target absent'; fi
+          )
           sudo dmesg | grep -E 'apparmor="DENIED".*(comm="bwrap"|profile=".*bwrap)' | tail -15 || true
+          goroot="$(go env GOROOT)"
+          mkdir "$root/tmp" "$root/cache"
+          env -i HOME="$root/home" CODEX_HOME="$root/home" PATH="$goroot/bin:$root/bin" TMPDIR="$root/tmp" \
+            GOCACHE="$root/cache" GOTOOLCHAIN=local GOPROXY=off GOSUMDB=off CGO_ENABLED=0 \
+            NSTACK_CODEX_NATIVE_TEST=offline "$goroot/bin/go" test -mod=vendor -v ./internal/codex -run '^TestNativeOffline'
