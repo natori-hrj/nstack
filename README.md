@@ -42,3 +42,5 @@ Follow the [migration guide](docs/migration.md) before installing into an existi
 The default role examples use Sol for implementation and defensive work and Astra for review. You can edit the installed role TOMLs independently. Daybreak Blue is opt-in. Follow repository authorization for branch delivery and obtain explicit approval for release publication and merging. [Harness adapter contract](docs/adapters.md).
 
 [Skill reference, routing, and plugin installation](docs/skills.md) · [Codex compatibility](docs/codex.md) · [Upstream provenance](docs/upstream.md) · [MIT](LICENSE) · [Upstream MIT](LICENSE-upstream)
+
+[v0.3.0 commands and release notes](docs/v0.3.0.md)

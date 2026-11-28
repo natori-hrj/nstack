@@ -38,3 +38,5 @@ nstack (natori-stack) は、Lauren Tan (Poteto) の pstack を土台にした独
 モデル設定例は実装と防御作業に Sol、独立レビューに Astra を使います。導入済み TOML は個別に編集できます。Daybreak Blue は任意です。ブランチの納品はリポジトリの権限に従い、リリース公開とマージには明示的な許可を得ます。再配布時は両方の MIT 通知を同梱してください。[ホストアダプター契約](docs/adapters.ja.md)
 
 [スキル一覧・振り分け・プラグイン導入](docs/skills.ja.md) · [Codex 互換性](docs/codex.ja.md) · [上流と出典](docs/upstream.ja.md) · [MIT](LICENSE) · [上流 MIT](LICENSE-upstream)
+
+[v0.3.0 のコマンドとリリースノート](docs/v0.3.0.md)
