@@ -3,25 +3,29 @@ name: Offline candidate verification
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
 
 permissions:
   contents: read
+
+env:
+  # On a PR, github.sha is the synthetic merge commit, not the candidate head.
+  CANDIDATE_SHA: ${{ github.event_name == 'push' && github.sha || github.event.pull_request.head.sha }}
 
 jobs:
   common:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
-    env:
-      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ env.CANDIDATE_SHA }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.14"
-      - name: Verify exact PR head with no harness on PATH
+      - name: Verify exact candidate with no harness on PATH
         shell: bash
         run: |
           test "$(git rev-parse HEAD)" = "$CANDIDATE_SHA"
@@ -39,7 +43,6 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
-      CANDIDATE_SHA: ${{ github.event.pull_request.head.sha }}
       CODEX_VERSION: "0.172.0"
       CODEX_ARCHIVE_SHA256: a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392
     steps:
@@ -49,7 +52,7 @@ jobs:
         run: test "$COMMON_RESULT" = success
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ env.CANDIDATE_SHA }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -68,7 +71,7 @@ jobs:
           tar -xzf "$archive" -C "$tool_dir" "$asset"
           install -m 0755 "$tool_dir/$asset" "$tool_dir/codex"
           printf '%s\n' "$tool_dir" >> "$GITHUB_PATH"
-      - name: Verify exact PR head without provider credentials
+      - name: Verify exact candidate without provider credentials
         shell: bash
         run: |
           unset OPENAI_API_KEY CODEX_API_KEY
@@ -80,7 +83,7 @@ jobs:
           test "$cli_version" = "codex-cli $CODEX_VERSION"
           {
             echo '### Offline candidate verification'
-            printf '\n- PR head: `%s`\n- Codex: `%s`\n' "$actual_sha" "$cli_version"
+            printf '\n- Event: `%s`\n- Candidate SHA: `%s`\n- Codex: `%s`\n' "$GITHUB_EVENT_NAME" "$actual_sha" "$cli_version"
             printf -- '- Python: `%s`\n- Git: `%s`\n' "$(python3 --version)" "$(git --version)"
             printf -- '- PyYAML: `%s`\n' "$(python3 -c 'import yaml; print(yaml.__version__)')"
             echo '- Evidence: native Codex offline discovery and configuration plus Codex protocol fixtures. Zero authenticated model turns.'
