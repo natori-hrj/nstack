@@ -40,6 +40,8 @@ CLI 0.172.0 のヘルプには管理 worktree 用の `--worktree` もありま�
 
 ## 起動前のロール確認
 
+単体バイナリでは `nstack check-role <導入済みロール.toml> < model-list.json` を使います。自動レビューでは、下記の例と同じ引数を `nstack review` に渡し、ゲートコマンドの前に `--` を置きます。下記の Python コマンドは参照実装を使う場合の手順です。PyYAML は Python の配布検証に必要ですが、Go バイナリには不要です。利用者が指定するゲートには、そのゲート自身の実行環境が必要です。
+
 導入した TOML と、対象スコープでの検出を確認します。同じアカウントとクライアントの app-server で `includeHidden: true` を付けて `model/list` を取得し、全ページを `{"data": [...]}` にまとめます。`python3 adapters/codex/check_role.py <導入済みロール.toml> < model-list.json` を実行します。モデルが継承設定なら実セッションで解決し、`--inherited-model` と、該当する場合は `--inherited-effort` に渡します。モデル一覧は公示されたアクセスの証拠です。ライブゲートが必要な場合は、応答完了を別途記録します。
 
 `adapters/codex/optional/nstack_security_daybreak.toml` は利用する場合に agents ディレクトリへ配置します。許可された防御作業に明示的に選択し、事前確認に `--daybreak-selected` を付けます。`availableAccessPrograms.cyber` に `daybreakBlue` があることを確認します。クライアントが要求する場合は、そのセッションに `--cyber-access-program daybreak_blue` を指定します。グローバル既定は無効のままにします。ロール、モデル、アクセスが不足している場合は起動を停止し、理由を報告します。モデルの代替には明示的な選択が必要です。
@@ -68,7 +70,7 @@ python3 adapters/codex/review.py --authorize-host \
 
 ### Go ホストアダプター
 
-このチェックアウトで `go build -o nstack-codex ./cmd/nstack-codex` を実行します（Go 1.22 以降、Linux）。Codex CLI 0.172.0 と既存の ChatGPT OAuth ログインが必要です。`nstack-codex review` には上記と同じ引数を渡し、ゲートコマンドの前には `--` を指定します。`nstack-codex check-role <導入済みロール.toml> < model-list.json` は Python 版と同じ入力でロールの公示情報を検証します。
+このチェックアウトから[単体 nstack バイナリ](../README.ja.md#単体-go-バイナリ)をビルドできます（Go 1.25 以降、Linux）。レビューには Codex CLI 0.172.0 と既存の ChatGPT OAuth ログインが必要です。`nstack review` には上記と同じ引数を渡し、ゲートコマンドの前には `--` を指定します。`nstack check-role <導入済みロール.toml> < model-list.json` は Python 版と同じ入力でロールの公示情報を検証します。既存の `nstack-codex` というバイナリ名でも引数は同じです。
 
 `python3 -B tests/go_compatibility.py` は認証なしで共通ワークフロー、ロール、app-server の fixture を実行します。`NSTACK_CODEX_NATIVE_TEST=offline go test -v ./internal/codex -run '^TestNativeOffline'` は実 Codex を認証なしで検証します。別の `NSTACK_CODEX_NATIVE_TEST=oauth go test -v ./internal/codex -run '^TestNativeOAuth$'` は既存 OAuth アカウントの利用許可を得てから実行し、使い捨てデータで Sol と Astra の応答を確認します。
 

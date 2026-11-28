@@ -30,6 +30,8 @@ For comparisons, record elapsed time, agent runs, reviews, human interventions, 
 
 ## Role preflight
 
+With the standalone binary, use `nstack check-role <installed-role.toml> < model-list.json`. For automated review, use `nstack review` with the arguments in the example below, including `--` before the gate. The Python entry points below are the reference alternatives. PyYAML is needed for the Python distribution tests, not for the Go binary. A user-specified gate still needs whichever tools it runs.
+
 Read the installed role TOML and check discovery in the intended scope. Through an app-server for the same account and client, request `model/list` with `includeHidden: true` and collect all pages into one `{"data": [...]}` JSON result. Run `python3 adapters/codex/check_role.py <installed-role.toml> < model-list.json`. For an inherited model, resolve it in the active session and pass `--inherited-model` and, if applicable, `--inherited-effort`. The catalog indicates advertised access; record a completed response separately when a live gate is required.
 
 Copy `adapters/codex/optional/nstack_security_daybreak.toml` to the agents directory only if you intend to use that route. Explicitly select it for an authorized defensive task and pass `--daybreak-selected` to preflight. Require `availableAccessPrograms.cyber` to advertise `daybreakBlue`. Select the program for that session with `--cyber-access-program daybreak_blue` if required by the client. Keep the global program default off. If the role, model or access is unavailable, stop dispatch and report the reason. Model substitutions require an explicit choice.
@@ -58,7 +60,7 @@ Delivery resolves one effective Git push destination and rejects an unverified r
 
 ### Go host adapter
 
-Build with `go build -o nstack-codex ./cmd/nstack-codex` from this checkout (Go 1.22+, Linux). The Go command uses Codex CLI 0.172.0 and requires an existing ChatGPT OAuth login. Run `nstack-codex review` with the review arguments above, including the literal `--` before the gate command. `nstack-codex check-role <installed-role.toml> < model-list.json` checks advertised role capabilities using the same input as the Python command.
+Build the [standalone nstack binary](../README.md#standalone-go-binary) from this checkout (Go 1.25+, Linux). The Go command uses Codex CLI 0.172.0 and requires an existing ChatGPT OAuth login for review. Run `nstack review` with the review arguments above, including the literal `--` before the gate command. `nstack check-role <installed-role.toml> < model-list.json` checks advertised role capabilities using the same input as the Python command. Existing builds named `nstack-codex` accept the same arguments.
 
 `python3 -B tests/go_compatibility.py` replays the shared workflow, role and app-server fixtures without credentials. `NSTACK_CODEX_NATIVE_TEST=offline go test -v ./internal/codex -run '^TestNativeOffline'` exercises native Codex without credentials. The separate `NSTACK_CODEX_NATIVE_TEST=oauth go test -v ./internal/codex -run '^TestNativeOAuth$'` smoke requires authorization to use the existing OAuth account and runs Sol and Astra on disposable data.
 

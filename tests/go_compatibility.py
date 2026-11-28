@@ -1,5 +1,6 @@
 """Compare the Go core and Python on disposable, credential-free fixtures."""
 import json
+import fcntl
 import os
 from pathlib import Path
 import shutil
@@ -181,6 +182,102 @@ def verify_role_toml(directory, native):
     print(f"Codex role TOML: {len(cases)} Python/Go cases verified", flush=True)
 
 
+def verify_installer(directory, native, *, python_activation=False):
+    directory.mkdir()
+    python = [sys.executable, "-B", str(ROOT / "adapters/codex/install.py")]
+    go = [str(native), "install"]
+    assert "assets sha256:" in subprocess.check_output(
+        [str(native), "--version"], cwd=directory, env={"PATH": ""}, text=True)
+    homes = [directory / "python-home", directory / "go-home"]
+
+    def install(launcher, home, action, snapshot, code=0, error=""):
+        env = {"HOME": str(home), "PATH": os.environ["PATH"] if launcher == python else "",
+               "PYTHONDONTWRITEBYTECODE": "1"}
+        run = subprocess.run([*launcher, "--home", str(home), action, snapshot], cwd=directory,
+                             env=env, capture_output=True, text=True, timeout=15)
+        assert run.returncode == code and error in run.stderr, run
+        if code == 0:
+            assert run.stdout.strip() == str(home / "nstack/snapshots" / snapshot), run
+        return run
+
+    def payload(root):
+        return {p.relative_to(root).as_posix(): p.read_bytes() if p.is_file() else None
+                for p in root.rglob("*")}
+
+    for launcher, home in zip((python, go), homes):
+        activate = launcher if python_activation else go
+        custom = home / "agents/nstack_implement.toml"
+        custom.parent.mkdir(parents=True)
+        custom.write_text('name = "nstack_implement"\nmodel = "personal-model"\n')
+        install(launcher, home, "stage", "../escape", 2, "invalid snapshot identifier")
+        install(launcher, home, "stage", "first")
+        install(launcher, home, "stage", "first")
+        assert not (home / "skills").exists(), "staging changed discovery"
+        install(activate, home, "activate", "first")
+        install(launcher, home, "stage", "second")
+        active = home / "skills/nstack-managed"
+        assert active.readlink() == home / "nstack/snapshots/first/skills"
+        install(activate, home, "activate", "second")
+        assert active.readlink() == home / "nstack/snapshots/second/skills"
+        install(activate, home, "activate", "first")
+        assert active.readlink() == home / "nstack/snapshots/first/skills"
+        assert custom.read_text() == 'name = "nstack_implement"\nmodel = "personal-model"\n'
+
+    assert payload(homes[0] / "nstack/snapshots") == payload(homes[1] / "nstack/snapshots")
+    child = directory / "physical-home" / "child"
+    child.mkdir(parents=True)
+    raw = directory / "symlink-home"
+    raw.symlink_to(child, target_is_directory=True)
+    physical = child.parent / "codex"
+    wrong = directory / "codex"
+    physical.mkdir()
+    wrong.mkdir()
+    for launcher, id in ((python, "python"), (go, "go")):
+        selected = subprocess.check_output(
+            [*launcher, "--home", str(raw) + "/../codex", "stage", id], cwd=directory,
+            env={"PATH": "", "PYTHONDONTWRITEBYTECODE": "1"}, text=True, timeout=15)
+        assert selected.strip() == str(physical / "nstack/snapshots" / id)
+    assert not list(wrong.iterdir())
+    home = homes[0]
+    existing = home / "nstack/snapshots/first"
+    # This migration document was not present in published Python-era snapshots.
+    (existing / "docs/behavior-v0.3.0.md").unlink()
+    install(go, home, "activate", "first")
+    install(go, home, "stage", "third")
+    install(python, home, "stage", "third")
+    install(python if python_activation else go, home, "activate", "third")
+    install(go, home, "activate", "first")
+    active = home / "skills/nstack-managed"
+    assert active.readlink() == existing / "skills"
+    alias = directory / "linked-existing-skill"
+    alias.mkdir()
+    (alias / "SKILL.md").write_text('---\nname: >-\n  natori-mode\n---\n')
+    link = home / "skills/custom-alias"
+    link.symlink_to(alias, target_is_directory=True)
+    for launcher in ((python, go) if python_activation else (go,)):
+        install(launcher, home, "activate", "third", 1, "move existing skill out of discovery")
+        assert link.readlink() == alias and active.readlink() == existing / "skills"
+    # Both installers agree on the same lock inode.
+    with (home / "nstack/lock").open("r") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        process = subprocess.Popen([*go, "--home", str(home), "stage", "waits"],
+                                   cwd=directory, env={"PATH": ""}, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE)
+        try:
+            try:
+                process.wait(timeout=0.3)
+            except subprocess.TimeoutExpired:
+                pass
+            else:
+                raise AssertionError("Go did not wait for the Python-compatible flock")
+            assert not (home / "nstack/snapshots/waits").exists()
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            process.communicate(timeout=10)
+        assert process.returncode == 0
+    print("Installer parity: bytes, persistent paths, migration, rollback, collisions and flock verified", flush=True)
+
+
 def main():
     with TemporaryDirectory(prefix="nstack-go-compat-") as scratch:
         root = Path(scratch)
@@ -210,6 +307,7 @@ def main():
         verify_roles(root, (str(native), "check-role"))
         print("Codex role preflight fixtures passed on Python and Go", flush=True)
         verify_role_toml(root / "role-toml", native)
+        verify_installer(root / "install", native)
         env = {"PATH": os.environ["PATH"], "HOME": str(home), "TMPDIR": str(root),
                "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_ALLOW_PROTOCOL": "file",
                "PYTHONUTF8": "1"}
