@@ -1,0 +1,65 @@
+name: "Diagnostic only: PR 24 native sandbox"
+
+on:
+  push:
+    branches: [diagnostics/pr24-codex-native]
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reproduce Codex sandbox startup without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'Diagnostic SHA %s; production target d6a0277dcb9c2d6eed2718ef0d0f21520196ae09; do not merge\n' "$GITHUB_SHA"
+          uname -srmo
+          grep -E '^(NAME|VERSION_ID)=' /etc/os-release
+          for field in kernel.apparmor_restrict_unprivileged_userns kernel.unprivileged_userns_clone user.max_user_namespaces; do
+            sysctl "$field" || true
+          done
+          awk '/^(Seccomp|NoNewPrivs):/' /proc/self/status
+          cat /proc/self/attr/current || true
+          for ns in user pid mnt; do readlink "/proc/self/ns/$ns"; done
+          findmnt -n -o TARGET,OPTIONS /proc
+          root="$(mktemp -d "$RUNNER_TEMP/nstack-diag.XXXXXX")"
+          mkdir "$root/bin" "$root/codex-resources" "$root/home" "$root/checkout"
+          fetch() {
+            local name="$1" sum="$2" dest="$3" asset
+            asset="$name-x86_64-unknown-linux-musl"
+            curl -fsSL "https://github.com/openai/codex/releases/download/rust-v0.172.0/$asset.tar.gz" -o "$root/$asset.tar.gz"
+            printf '%s  %s\n' "$sum" "$root/$asset.tar.gz" | sha256sum -c
+            tar -xzf "$root/$asset.tar.gz" -C "$root" "$asset"
+            install -m 0755 "$root/$asset" "$root/$dest"
+          }
+          fetch codex a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392 bin/codex
+          fetch codex-exec-server 1276ea8882a5c96fbc35fdb57c169198fe95f845dab0be864a8a0bc026efa8d5 bin/codex-exec-server
+          fetch bwrap e3968d3fdca4d9e078c118a52b2d0d76c7b55a03fc012cc210c544e9e60561d8 codex-resources/bwrap
+          "$root/bin/codex" --version
+          "$root/codex-resources/bwrap" --version
+          stat -c '%a %U:%G %n' "$root"/bin/* "$root/codex-resources/bwrap"
+          if command -v bwrap; then bwrap --version; fi
+          set +e
+          "$root/codex-resources/bwrap" --unshare-user --unshare-pid --unshare-net --ro-bind / / --proc /proc -- /bin/true
+          printf 'Bundled bwrap startup exit=%s\n' "$?"
+          set -e
+          cd "$root/checkout"
+          coproc APP { env -i HOME="$root/home" CODEX_HOME="$root/home" PATH="$root/bin" \
+            "$root/bin/codex" app-server --listen stdio://; }
+          pid=$APP_PID
+          trap 'kill "$pid" 2>/dev/null || true; wait "$pid" 2>/dev/null || true' EXIT
+          printf '%s\n' '{"id":1,"method":"initialize","params":{"clientInfo":{"name":"nstack-ci-diagnostic","version":"1"}}}' '{"method":"initialized"}' >&"${APP[1]}"
+          jq -cn --arg cwd "$PWD" \
+            '{id:2,method:"command/exec",params:{cwd:$cwd,command:["/bin/sh","-c","printf shell-entered; : > \"$1\"","probe",($cwd+"/must-not-exist")],sandboxPolicy:{type:"readOnly",networkAccess:false},timeoutMs:5000,outputBytesCap:5000,env:{LC_ALL:"C"}}}' >&"${APP[1]}"
+          while IFS= read -r -t 8 line <&"${APP[0]}"; do
+            if jq -e '.id == 2' <<< "$line" >/dev/null; then
+              jq '{id,error,result}' <<< "$line"
+              break
+            fi
+          done
+          if test -e must-not-exist; then echo 'Write target exists'; else echo 'Write target absent'; fi
+          sudo dmesg | grep -E 'apparmor="DENIED".*(comm="bwrap"|profile=".*bwrap)' | tail -15 || true
