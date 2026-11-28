@@ -120,6 +120,9 @@ for line in sys.stdin:
             assert sha in prompt and re.fullmatch("[0-9a-f]{40}", sha)
             tracked = "previous" in schema["properties"]
             registry = json.loads(prompt.split("Registry: ")[-1]) if tracked else {}
+            if registry and scenario == "review-first-repeat":
+                assert "input alpha" in registry["F1"]["initialEvidence"]
+                assert "input beta" in registry["F2"]["initialEvidence"]
             findings = []
             previous = [{"id": key, "status": "resolved",
                          "evidence": f"candidate {sha} checked at {cwd}/result.txt"}
@@ -136,7 +139,8 @@ for line in sys.stdin:
                 findings = [{"location": f"{cwd}/result.txt", "evidence": f"incorrect output at {sha}",
                              "expected": "correct output", "impact": "wrong user-facing result"}]
                 if scenario == "review-first-repeat" and not registry:
-                    findings.append({**findings[0], "location": "second-output"})
+                    findings.append({**findings[0], "evidence": f'{findings[0]["evidence"]} for input beta'})
+                    findings[0]["evidence"] += " for input alpha"
             if scenario == "reroute":
                 notify("model/rerouted", {**context, "toModel": "another-model"})
             result = {"candidate": "0" * 40 if scenario == "sha" else sha,

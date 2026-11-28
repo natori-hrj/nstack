@@ -45,6 +45,15 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         git(repo, "add", "result.txt")
         git(repo, "commit", "-qm", "review-only candidate")
     initial = git(repo, "rev-parse", "HEAD")
+    delivery_branch = "None" if scenario == "delivery-none" else "feature"
+    work_branch = "None" if scenario == "work-none" else "authorized-work"
+    if scenario.startswith("protected-delivery-"):
+        delivery_branch = scenario.removeprefix("protected-delivery-")
+        git(remote, "update-ref", "refs/heads/develop/v0.3.0", base)
+        git(remote, "symbolic-ref", "HEAD", "refs/heads/develop/v0.3.0")
+        git(remote, "update-ref", "-d", "refs/heads/main")
+    delivery_ref = f"refs/heads/{delivery_branch}"
+    work_ref = f"refs/heads/{work_branch}"
     if scenario == "review-first-detached":
         git(repo, "switch", "--detach", initial)
     if scenario == "review-first-collision":
@@ -53,8 +62,9 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         git(repo, "push", str(remote), f"{base}:refs/heads/feature")
         git(remote, "symbolic-ref", "HEAD", "refs/heads/feature")
         git(repo, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
-    if scenario == "delivery-mismatch":
-        git(repo, "push", str(remote), f"{base}:refs/heads/feature")
+    if scenario in {"delivery-mismatch", "review-only-fast-forward"}:
+        git(repo, "push", str(remote), f"{base}:{delivery_ref}")
+    remote_start = git(repo, "ls-remote", "--refs", str(remote), delivery_ref)
     assert git(repo, "status", "--porcelain", "--untracked-files=all") == ""
     if scenario == "dirty":
         (repo / "user-file").write_text("preserve this file\n")
@@ -93,10 +103,10 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         sys.executable, "adapters/codex/review.py", "--authorize-host",
         "--repo", str(repo), "--base", base, "--brief", str(brief), "--evidence", str(evidence),
         "--max-remediations", str(budget),
-        *([] if scenario in no_work else ["--work-ref", "refs/heads/authorized-work"]),
+        *([] if scenario in no_work or review_only else ["--work-ref", work_ref]),
         *([] if scenario in local_only else [
             "--push", "origin" if scenario == "destination-changed" else str(remote),
-            "--delivery-ref", "refs/heads/feature",
+            "--delivery-ref", delivery_ref,
         ]),
         *(["--review-only"] if review_only else []),
         *(["--review-first"] if review_first else []),
@@ -110,14 +120,13 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
         "?? user-file" if scenario == "dirty" else ""
     )
     assert git(repo, "diff", "--name-only", base, "HEAD") in ("", "result.txt")
-    remote_ref = git(repo, "ls-remote", "--refs", str(destination), "refs/heads/feature")
+    remote_ref = git(repo, "ls-remote", "--refs", str(destination), delivery_ref)
     assert git(repo, "ls-remote", "--tags", str(destination)) == ""
     if scenario == "rewritten":
         assert git(repo, "ls-remote", "--refs", str(remote), "refs/heads/feature") == ""
     if expectation:
         assert result.returncode == 1 and expectation in status["error"], (result, status)
-        assert remote_ref == (f"{base}\trefs/heads/feature"
-                              if scenario in {"remote-default", "delivery-mismatch"} else "")
+        assert remote_ref == remote_start
         if scenario in {
             "review-first-no-auth", "local-no-auth", "review-first-collision", "remote-default",
             "detached-default", "delivery-mismatch", "writer-ref-changed", "destination-changed",
@@ -176,12 +185,12 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     if review_only or scenario in {"review-first-pass", "review-first-detached"}:
         assert not list(evidence.glob("*-implementation.json"))
         assert git(repo, "rev-parse", "HEAD") == initial
-        assert not git(repo, "for-each-ref", "refs/heads/authorized-work")
+        assert not git(repo, "for-each-ref", work_ref)
         assert json.loads(first["message"])["verdict"] == "pass"
         if scenario == "review-first-detached":
             assert remote_ref == ""
         else:
-            assert remote_ref.split() == [initial, "refs/heads/feature"]
+            assert remote_ref.split() == [initial, delivery_ref]
         return
     second = json.loads((evidence / "1-review.json").read_text())
     implementation = json.loads((evidence / "1-implementation.json").read_text())
@@ -200,9 +209,9 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     assert json.loads(first["message"])["verdict"] == "changes_requested"
     assert json.loads(second["message"])["verdict"] == "pass"
     assert second["writeProbe"] == "write-denied 13"
-    assert remote_ref.split() == [second["candidate"], "refs/heads/feature"]
+    assert remote_ref.split() == [second["candidate"], delivery_ref]
     assert (repo / "result.txt").read_text() == "correct\n"
-    assert git(repo, "symbolic-ref", "HEAD") == "refs/heads/authorized-work"
+    assert git(repo, "symbolic-ref", "HEAD") == work_ref
 
 
 def verify_pr_delivery(root):
@@ -230,7 +239,7 @@ def verify_pr_delivery(root):
     start = git(repo, "rev-parse", "HEAD^")
     base = git(repo, "rev-parse", "main")
     args = SimpleNamespace(push=str(remote), github_repo="fixture/project", delivery_ref="refs/heads/123",
-                           pr_base="main", pr_title=None, pr_number=456)
+                           pr_base="main", pr_title=None, pr_number=456, review_only=False)
     evidence = root / "pr-evidence"
     evidence.mkdir()
     reported_head = "another-branch"
@@ -319,7 +328,11 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "review-first-no-auth", "explicit refs/heads/", review_first=True)
         exercise(root, fake_bin, "review-first-collision", "work ref must be new", review_first=True)
         exercise(root, fake_bin, "remote-default", "remote default", review_first=True)
+        for branch in ("main", "master", "trunk"):
+            exercise(root, fake_bin, f"protected-delivery-{branch}", "isolated feature branch", review_only=True)
         exercise(root, fake_bin, "delivery-mismatch", "starting candidate", review_first=True)
+        exercise(root, fake_bin, "delivery-none", None, review_only=True)
+        exercise(root, fake_bin, "work-none", None, review_first=True)
         exercise(root, fake_bin, "local-no-auth", "explicit refs/heads/")
         exercise(root, fake_bin, "writer-ref-changed", "work ref or candidate changed")
         exercise(root, fake_bin, "destination-changed", "effective delivery destination changed")
@@ -327,6 +340,7 @@ if __name__ == "__main__":
         exercise(root, fake_bin, "review-first-gate", "quality gate failed", review_first=True, gated=False)
         exercise(root, fake_bin, "review-first-blocked", "review blocked", review_first=True)
         exercise(root, fake_bin, "review-only", None, review_only=True)
+        exercise(root, fake_bin, "review-only-fast-forward", None, review_only=True)
         exercise(root, fake_bin, "review-only-changes", "requested changes in review-only mode", review_only=True)
         exercise(root, fake_bin, "rewritten", None)
         exercise(root, fake_bin, "detached-default", "cannot verify a non-default remote branch")

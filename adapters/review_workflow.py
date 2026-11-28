@@ -247,11 +247,12 @@ class Delivery:
     def __init__(self, args, repo, base, start):
         self.repo, self.args, self.base = repo, args, base
         self.ref = branch_ref(repo, args.delivery_ref)
+        self.pr_base_ref = f"refs/heads/{args.pr_base}" if args.pr_base else None
         self.remote = f"nstack-delivery-{uuid.uuid4().hex}"
         self.config, self.github = delivery_target(args, repo, self.remote)
         self.default = self.remote_default()
         self.remote_start = self.remote_ref(self.ref)
-        if self.remote_start is not None and self.remote_start != start:
+        if not args.review_only and self.remote_start is not None and self.remote_start != start:
             raise ValueError("delivery ref does not match the starting candidate")
         self.number = args.pr_number
         if self.github and self.number is None:
@@ -277,9 +278,11 @@ class Delivery:
         return fields[0]
 
     def remote_default(self):
+        if self.ref in ("refs/heads/main", "refs/heads/master", "refs/heads/trunk"):
+            raise ValueError("delivery requires an isolated feature branch")
         reply = git(self.repo, "ls-remote", "--symref", "--", self.remote, "HEAD", config=self.config)
         default = default_branch(self.repo, reply)
-        if self.ref in (default, f"refs/heads/{self.args.pr_base}"):
+        if self.ref in (default, self.pr_base_ref):
             raise ValueError("delivery ref is the remote default or PR base branch")
         return default
 
@@ -302,8 +305,8 @@ class Delivery:
             raise ValueError("remote default branch or delivery candidate changed")
         if self.remote_start is not None:
             git(self.repo, "merge-base", "--is-ancestor", self.remote_start, candidate)
-        if self.args.pr_base:
-            base_tip = self.remote_ref(f"refs/heads/{self.args.pr_base}")
+        if self.pr_base_ref:
+            base_tip = self.remote_ref(self.pr_base_ref)
             if base_tip is None:
                 raise ValueError("cannot verify remote PR base")
             verify_pr_base(self.repo, self.base, candidate, base_tip)
@@ -375,7 +378,7 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
                         raise ValueError("original checkout ref changed")
                     if args.push:
                         delivery = Delivery(args, repo, base, start)
-                        if work in (delivery.default, delivery.ref, f"refs/heads/{args.pr_base}"):
+                        if work in (delivery.default, delivery.ref, delivery.pr_base_ref):
                             raise ValueError("work ref must be distinct from delivery and protected refs")
                     git(repo, "switch", "-c", work.removeprefix("refs/heads/"), last)
                 if delivery:
@@ -463,7 +466,8 @@ def execute(adapter: ReviewAdapter, args, repo, evidence):
                 for item in review["findings"]:
                     identifier = f"F{len(registry) + 1}"
                     registry[identifier] = {"initialLocation": item["location"],
-                                            "contract": item["expected"], "failure": item["impact"]}
+                                            "contract": item["expected"], "failure": item["impact"],
+                                            "initialEvidence": item["evidence"]}
                     new_ids[identifier] = item
             write_json(review_path, {**record, "review": review, "newFindingIds": new_ids})
             previous = review.get("previous", [])
