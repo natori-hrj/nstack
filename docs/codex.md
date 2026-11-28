@@ -22,7 +22,7 @@ The [role examples](../examples/agents/) set Sol for implementation and authoriz
 
 ## Verification
 
-Run `python3 tests/validate.py` for manifest, TOML, CLI skill discovery, and disposable Git worktree checks. The concurrent workers in that suite are deterministic fixtures. The v0.1.0 live checks on Codex CLI 0.172.0 verified the model requests and outcomes, with historical details in the [Japanese record](codex.ja.md). Session metadata identifies the configured model. It cannot independently establish the serving backend’s identity.
+Run `python3 tests/validate.py` for all offline checks. Use `--suite common` for the skill catalog, Git and portable workflow fixtures without Codex, or `--suite codex` for manifest, TOML, native discovery/configuration and Codex protocol fixtures. The concurrent workers are deterministic Git fixtures. The v0.1.0 live checks on Codex CLI 0.172.0 verified the model requests and outcomes, with historical details in the [Japanese record](codex.ja.md). Session metadata identifies the configured model. It cannot independently establish the serving backend’s identity.
 
 For comparisons, record elapsed time, agent runs, reviews, human interventions, and verified tasks using the same criteria. Codex JSONL usage includes input, cached input, and output tokens. Derive uncached input by subtraction. Keep session logs and IDs outside this repository. Comparative evidence is required for efficiency claims.
 

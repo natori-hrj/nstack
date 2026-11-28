@@ -1,4 +1,5 @@
 """Offline distribution and disposable Git workflow checks (Python 3.11+)."""
+import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
@@ -22,9 +23,7 @@ def git(cwd, *args):
 
 
 def verify_catalog():
-    manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
-    assert manifest["name"] == "nstack" and manifest["version"] == "0.3.0"
-    skills = ROOT / manifest["skills"]
+    skills = ROOT / "skills"
     names = set()
     for path in skills.glob("*/SKILL.md"):
         text = path.read_text()
@@ -37,6 +36,18 @@ def verify_catalog():
     assert len(names) == 26
     assert {"natori-mode", "setup-nstack"} <= names
     assert {"poteto-mode", "setup-pstack"}.isdisjoint(names)
+    for notice in ("LICENSE", "LICENSE-upstream"):
+        assert "Permission is hereby granted" in (ROOT / notice).read_text()
+    swarm = (skills / "swarm/SKILL.md").read_text()
+    assert "Codex" not in swarm and "active harness adapter" in swarm
+    assert "Git worktree" in swarm and "without granting sibling write access" in swarm
+    return names
+
+
+def verify_codex_catalog():
+    manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
+    assert manifest["name"] == "nstack" and manifest["version"] == "0.3.0"
+    assert (ROOT / manifest["skills"]).resolve() == ROOT / "skills"
     assert {path.stem for path in (ROOT / "examples/agents").glob("*.toml")} == {
         "nstack_implement", "nstack_security", "nstack_review",
     }
@@ -46,10 +57,6 @@ def verify_catalog():
         if path.stem == "nstack_review":
             assert "sandbox_mode" not in config
             assert "read-only parent" in config["developer_instructions"]
-    swarm = (skills / "swarm/SKILL.md").read_text()
-    assert "Codex" not in swarm and "active harness adapter" in swarm
-    assert "Git worktree" in swarm and "without granting sibling write access" in swarm
-    return names
 
 
 def verify_discovery(repo, home, snapshot, names):
@@ -237,9 +244,22 @@ def verify_worktrees(repo, directory):
     assert git(repo, "remote") == ""
 
 
-if __name__ == "__main__":
+def common():
     names = verify_catalog()
-    with TemporaryDirectory(prefix="pstack-test-") as temporary:
+    with TemporaryDirectory(prefix="nstack-common-") as temporary:
+        directory = Path(temporary)
+        repo = directory / "git"
+        repo.mkdir()
+        git(repo, "init", "-q")
+        verify_worktrees(repo, directory)
+    subprocess.run([sys.executable, "-B", str(ROOT / "tests/compatibility.py")], cwd=ROOT, check=True)
+    print(f"Common offline: {len(names)} skills, licenses, Git and portable workflow fixtures verified")
+
+
+def codex():
+    verify_codex_catalog()
+    names = {path.parent.name for path in (ROOT / "skills").glob("*/SKILL.md")}
+    with TemporaryDirectory(prefix="nstack-codex-") as temporary:
         directory = Path(temporary)
         repo = directory / "repo"
         repo.mkdir()
@@ -247,7 +267,15 @@ if __name__ == "__main__":
         verify_readme_install_stops(directory)
         verify_install(repo, directory, names)
         verify_roles(directory)
-        verify_worktrees(repo, directory)
-    workflow = run(sys.executable, "-B", str(ROOT / "tests/review_workflow.py"), cwd=ROOT)
-    print(workflow.stdout.strip())
-    print(f"{len(names)} skills discovered; install/upgrade/rollback, role preflight and isolated Git fixture verified")
+    print(f"Codex offline: {len(names)} skills discovered; install/upgrade/rollback and role preflight verified", flush=True)
+    subprocess.run([sys.executable, "-B", str(ROOT / "tests/review_workflow.py")], cwd=ROOT, check=True)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--suite", choices=("all", "common", "codex"), default="all")
+    args = parser.parse_args()
+    if args.suite in ("all", "common"):
+        common()
+    if args.suite in ("all", "codex"):
+        codex()
