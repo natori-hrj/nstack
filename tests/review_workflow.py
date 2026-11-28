@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+from functools import partial
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,7 +18,8 @@ def git(cwd, *args):
     return subprocess.check_output(["git", "-C", str(cwd), *args], text=True).strip()
 
 
-def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, review_only=False, review_first=False):
+def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2,
+             review_only=False, review_first=False, launcher=()):
     directory = root / scenario
     directory.mkdir()
     source = directory / "source"
@@ -113,7 +115,7 @@ def exercise(root, fake_bin, scenario, expectation, *, gated=True, budget=2, rev
     local_only = {"review-first-detached", "review-first-no-auth", "local-no-auth"}
     no_work = {"review-first-pass", "review-first-detached", "review-first-no-auth", "local-no-auth"}
     result = subprocess.run([
-        sys.executable, "adapters/codex/review.py", "--authorize-host",
+        *(launcher or (sys.executable, "adapters/codex/review.py")), "--authorize-host",
         "--repo", str(repo), "--base", base, "--brief", str(brief), "--evidence", str(evidence),
         "--max-remediations", str(budget),
         *([] if scenario in no_work or review_only else ["--work-ref", work_ref]),
@@ -354,61 +356,69 @@ with adapter.isolated(cwd, cwd / "isolated") as (server, count):
     assert config.read_text() == original
 
 
-if __name__ == "__main__":
+def verify_protocol(launcher=()):
     with TemporaryDirectory(prefix="nstack-review-test-") as temporary:
         root = Path(temporary)
-        verify_real_config(root)
-        print("Codex native offline: effective MCP configuration verified", flush=True)
+        if not launcher:
+            verify_real_config(root)
+            print("Codex native offline: effective MCP configuration verified", flush=True)
         fake_bin = root / "bin"
         fake_bin.mkdir()
         command = fake_bin / "codex"
         shutil.copyfile(ROOT / "tests/fixtures/review_app_server.py", command)
         command.chmod(0o700)
-        exercise(root, fake_bin, "success", None)
-        exercise(root, fake_bin, "review-first-detached", None, review_first=True)
-        exercise(root, fake_bin, "review-first-two-rounds", "remediation budget exhausted", review_first=True)
-        exercise(root, fake_bin, "review-first-pass", None, review_first=True)
-        exercise(root, fake_bin, "review-first-fast-forward", None, review_first=True)
-        exercise(root, fake_bin, "review-first-diverged", "merge-base", review_first=True)
-        exercise(root, fake_bin, "review-first-remediation-fast-forward", None, review_first=True)
-        exercise(root, fake_bin, "review-first-fix", None, review_first=True)
-        exercise(root, fake_bin, "review-first-repeat", "recurs or remains uncertain", review_first=True)
-        exercise(root, fake_bin, "review-first-uncertain", "recurs or remains uncertain", review_first=True)
-        exercise(root, fake_bin, "review-first-unknown", "unexpected previous", review_first=True)
-        exercise(root, fake_bin, "review-first-missing", "assess every previous", review_first=True)
-        exercise(root, fake_bin, "review-first-no-auth", "explicit refs/heads/", review_first=True)
-        exercise(root, fake_bin, "review-first-collision", "work ref must be new", review_first=True)
-        exercise(root, fake_bin, "remote-default", "remote default", review_first=True)
+        case = partial(exercise, root, fake_bin, launcher=launcher)
+        case("success", None)
+        case("review-first-detached", None, review_first=True)
+        case("review-first-two-rounds", "remediation budget exhausted", review_first=True)
+        case("review-first-pass", None, review_first=True)
+        case("review-first-fast-forward", None, review_first=True)
+        case("review-first-diverged", "merge-base", review_first=True)
+        case("review-first-remediation-fast-forward", None, review_first=True)
+        case("review-first-fix", None, review_first=True)
+        case("review-first-repeat", "recurs or remains uncertain", review_first=True)
+        case("review-first-uncertain", "recurs or remains uncertain", review_first=True)
+        case("review-first-unknown", "unexpected previous", review_first=True)
+        case("review-first-missing", "assess every previous", review_first=True)
+        case("review-first-no-auth", "explicit refs/heads/", review_first=True)
+        case("review-first-collision", "work ref must be new", review_first=True)
+        case("remote-default", "remote default", review_first=True)
         for branch in ("main", "master", "trunk"):
-            exercise(root, fake_bin, f"protected-delivery-{branch}", "isolated feature branch", review_only=True)
-        exercise(root, fake_bin, "delivery-mismatch", "starting candidate", review_first=True)
-        exercise(root, fake_bin, "delivery-none", None, review_only=True)
-        exercise(root, fake_bin, "work-none", None, review_first=True)
-        exercise(root, fake_bin, "local-no-auth", "explicit refs/heads/")
-        exercise(root, fake_bin, "writer-ref-changed", "work ref or candidate changed")
-        exercise(root, fake_bin, "destination-changed", "effective delivery destination changed")
-        exercise(root, fake_bin, "review-first-zero", "remediation budget exhausted", review_first=True, budget=0)
-        exercise(root, fake_bin, "review-first-gate", "quality gate failed", review_first=True, gated=False)
-        exercise(root, fake_bin, "review-first-blocked", "review blocked", review_first=True)
-        exercise(root, fake_bin, "review-only", None, review_only=True)
-        exercise(root, fake_bin, "review-only-fast-forward", None, review_only=True)
-        exercise(root, fake_bin, "delivery-ref-suffix", None, review_only=True)
-        exercise(root, fake_bin, "review-only-changes", "requested changes in review-only mode", review_only=True)
-        exercise(root, fake_bin, "rewritten", None)
-        exercise(root, fake_bin, "detached-default", "cannot verify a non-default remote branch")
-        exercise(root, fake_bin, "assume-unchanged", "checkout has index flags")
-        exercise(root, fake_bin, "skip-worktree", "checkout has index flags")
-        verify_pr_delivery(root)
-        exercise(root, fake_bin, "unauthenticated", "no authenticated account")
-        exercise(root, fake_bin, "model", "absent from the active model catalog")
-        exercise(root, fake_bin, "permission", "permitted writing")
-        exercise(root, fake_bin, "mcp-forced", "MCP overrides did not take effect")
-        exercise(root, fake_bin, "gate-scratch", "could not verify quality gate scratch writes")
-        exercise(root, fake_bin, "wrong-policy", "unexpected sandbox policy")
-        exercise(root, fake_bin, "sha", "does not match the candidate")
-        exercise(root, fake_bin, "reroute", "reported a model reroute")
-        exercise(root, fake_bin, "repeat", "recurs or remains uncertain")
-        exercise(root, fake_bin, "budget", "remediation budget exhausted", budget=0)
-        exercise(root, fake_bin, "dirty", "dirty checkout")
-        exercise(root, fake_bin, "gate", "quality gate failed", gated=False)
+            case(f"protected-delivery-{branch}", "isolated feature branch", review_only=True)
+        case("delivery-mismatch", "starting candidate", review_first=True)
+        case("delivery-none", None, review_only=True)
+        case("work-none", None, review_first=True)
+        case("local-no-auth", "explicit refs/heads/")
+        case("writer-ref-changed", "work ref or candidate changed")
+        case("destination-changed", "effective delivery destination changed")
+        case("review-first-zero", "remediation budget exhausted", review_first=True, budget=0)
+        case("review-first-gate", "quality gate failed", review_first=True, gated=False)
+        case("review-first-blocked", "review blocked", review_first=True)
+        case("review-only", None, review_only=True)
+        case("review-only-fast-forward", None, review_only=True)
+        case("delivery-ref-suffix", None, review_only=True)
+        case("review-only-changes", "requested changes in review-only mode", review_only=True)
+        case("rewritten", None)
+        case("detached-default", "cannot verify a non-default remote branch")
+        case("assume-unchanged", "checkout has index flags")
+        case("skip-worktree", "checkout has index flags")
+        if not launcher:
+            verify_pr_delivery(root)
+        case("unauthenticated", "no authenticated account")
+        case("model", "absent from the active model catalog")
+        case("permission", "permitted writing")
+        case("mcp-forced", "MCP overrides did not take effect")
+        case("gate-scratch", "could not verify quality gate scratch writes")
+        case("wrong-policy", "unexpected sandbox policy")
+        case("sha", "does not match the candidate")
+        case("reroute", "reported a model reroute")
+        case("repeat", "recurs or remains uncertain")
+        case("budget", "remediation budget exhausted", budget=0)
+        case("dirty", "dirty checkout")
+        case("gate", "quality gate failed", gated=False)
     print("Codex protocol fixtures: remediation, exact SHA push and fail-closed cases verified")
+
+
+if __name__ == "__main__":
+    argv = sys.argv[1:]
+    verify_protocol(argv[1:] if argv[:1] == ["--"] else argv)
