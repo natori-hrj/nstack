@@ -60,7 +60,16 @@ jobs:
           fetch codex a2342a8f7f68f088be30620ccfe9cb84162c93a6b56177855961cda3ed6be392 bin/codex
           fetch codex-exec-server 1276ea8882a5c96fbc35fdb57c169198fe95f845dab0be864a8a0bc026efa8d5 bin/codex-exec-server
           fetch bwrap e3968d3fdca4d9e078c118a52b2d0d76c7b55a03fc012cc210c544e9e60561d8 codex-resources/bwrap
-          ln -s /usr/bin/bwrap "$root/bin/bwrap"
+          helper=/usr/local/libexec/nstack-ci/bwrap
+          sudo install -d -o root -g root -m 0755 "$(dirname "$helper")"
+          sudo install -o root -g root -m 0755 "$root/codex-resources/bwrap" "$helper"
+          sed "s|/usr/bin/bwrap|$helper|g" /usr/share/apparmor/extra-profiles/bwrap-userns-restrict > "$root/nstack-bwrap.profile"
+          grep -F "$helper" "$root/nstack-bwrap.profile"
+          grep -E 'signal|userns|capability' "$root/nstack-bwrap.profile"
+          sudo apparmor_parser --replace "$root/nstack-bwrap.profile"
+          test "$(sysctl -n kernel.apparmor_restrict_unprivileged_userns)" = 1
+          "$helper" --unshare-user --unshare-pid --unshare-net --ro-bind / / --proc /proc -- /bin/cat /proc/self/attr/current
+          ln -s "$helper" "$root/bin/bwrap"
           ln -s "$(command -v git)" "$root/bin/git"
           "$root/bin/codex" --version
           "$root/codex-resources/bwrap" --version
