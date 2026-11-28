@@ -99,6 +99,14 @@ jobs:
           test "$(readlink "$work/home/skills/nstack-managed")" = "$work/home/nstack/snapshots/first/skills"
           cmp LICENSE "$work/home/nstack/snapshots/first/LICENSE"
           cmp LICENSE-upstream "$work/home/nstack/snapshots/first/LICENSE-upstream"
+          for id in first second; do
+            nstack install --harness opencode --home "$work/opencode" stage "$id"
+            nstack install --harness opencode --home "$work/opencode" activate "$id"
+          done
+          test "$(readlink "$work/opencode/skills/nstack-managed")" = "$work/opencode/nstack/snapshots/second/skills"
+          nstack install --harness opencode --home "$work/opencode" activate first
+          test "$(readlink "$work/opencode/skills/nstack-managed")" = "$work/opencode/nstack/snapshots/first/skills"
+          test "$(readlink "$work/home/skills/nstack-managed")" = "$work/home/nstack/snapshots/first/skills"
           printf '%s\n' '{"data":[{"model":"gpt-6.2-astra","supportedReasoningEfforts":[{"reasoningEffort":"medium"}]}]}' |
             nstack check-role "$work/home/nstack/snapshots/first/examples/agents/nstack_review.toml"
   validate:

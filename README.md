@@ -4,40 +4,43 @@
 
 **Go deep. Build less. Verify more.**
 
-An engineering toolkit for Codex, built on the foundations of pstack. nstack (natori-stack) is an independent adaptation of Lauren Tan (Poteto)’s work for Codex CLI. It includes 14 workflow skills, 12 engineering principles, and seven playbooks. Start with the smallest useful change and verify it through observable results.
+nstack is a Go-based engineering toolkit for agent-assisted development, built on Lauren Tan (Poteto)’s pstack. Its shared library contains 14 workflow skills, 12 engineering principles, and seven playbooks. Define an observable outcome, make the smallest useful change, and verify the exact candidate.
 
-[GitHub repository](https://github.com/natori-hrj/nstack)
+| Harness | Workflow Support | Native Automation |
+|---|---|---|
+| [Codex](docs/codex.md) | Skills, roles and manual workflow | Go `nstack review` and `check-role` using the Codex adapter |
+| [OpenCode v2](docs/opencode.md) | Managed skills and an operator-led workflow | Unavailable ([#12](https://github.com/natori-hrj/nstack/issues/12)) |
+| Claude Code | Unavailable | [Deferred (#13)](https://github.com/natori-hrj/nstack/issues/13) |
+| Grok Build | Unavailable | [Deferred (#14)](https://github.com/natori-hrj/nstack/issues/14) |
 
-## Quick start
+**Workflow Support** installs the shared instructions and documents how to apply them in a host. **Native Automation** means nstack can enforce the review and delivery contract through an adapter. OpenCode review is a separate, operator-led read-only handoff; nstack does not certify its verdict schema, parallel writer isolation, or delivery. If a mandatory automation capability is missing, stop that run.
 
-1. Install the skills and agent files from a checkout using the commands below.
-2. Open a new `codex` session in your project. Run `$setup-nstack` to check discovery and review your model settings.
-3. Give `$natori-mode` a task with an observable outcome. For example, `$natori-mode Fix the duplicate rows when an import is retried. Show the failing and passing checks.`
+## Install from the single binary
 
-### Install at user scope
+Use the appropriate [release asset](https://github.com/natori-hrj/nstack/releases) as `nstack` and verify its SHA-256 before running it. Linux amd64 is execution-tested; Linux arm64 is cross-built only. Other OSes are unsupported. `nstack --version` prints the version and canonical embedded asset digest.
 
-Run from this checkout. Use Python 3.11+ and PyYAML on a POSIX host. For an existing installation, read the migration guide before activation. Keep both MIT notices with redistributed copies.
+For Codex:
 
 ```sh
 (
   set -e
   config_dir="${CODEX_HOME:-$HOME/.codex}"
-  revision="$(git rev-parse HEAD)"
-  python3 adapters/codex/install.py --home "$config_dir" stage "$revision"
-  python3 adapters/codex/install.py --home "$config_dir" activate "$revision"
-  mkdir -p "$config_dir/agents"
-  for agent in examples/agents/*.toml; do
-    dest="$config_dir/agents/${agent##*/}"
-    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
-      (set -C; cat "$agent" > "$dest") || exit 1
-    fi
-  done
+  snapshot="$(nstack --version)"
+  snapshot="${snapshot##*sha256:}"
+  nstack install --home "$config_dir" stage "$snapshot"
+  nstack install --home "$config_dir" activate "$snapshot"
 )
 ```
 
+In a fresh Codex session run `$setup-nstack`, then `$natori-mode` with your acceptance check. For OpenCode installation, role settings and `@natori-mode`, see the [OpenCode guide](docs/opencode.md). Model and reasoning settings are user-controlled; the installer does not write role or authentication settings.
+
+Stage a new snapshot ID and activate it to update. Activate a previous complete ID to roll back. Both hosts can coexist at separate homes. For old direct copies, plugins, or Python-managed snapshots, see the [migration guide](docs/migration.md). Resolve duplicate skill sources before activating and verify the resolved paths in the host.
+
+The binary needs no Python, PyYAML or Go toolchain at runtime. Workflow Support still needs the chosen harness; Codex automation needs Git, Codex CLI with approved OAuth, your quality-gate commands, and `gh` for PR delivery. The installer needs Linux procfs, flock, atomic rename and user extended attributes, and managed directories owned by the current user and writable only by that user. Staging is outside discovery; an interruption may leave private scratch. Atomic activation is not a guarantee of power-loss durability.
+
 ## Standalone Go binary
 
-Build with Go 1.25 or later (CI uses Go 1.27.4). Linux amd64 is execution-tested; Linux arm64 is cross-built but has not been tested on hardware. Other operating systems are unsupported. Use the same source bytes and toolchain to reproduce the binaries without checkout metadata or host paths:
+Use Go 1.25 or later (verification pins Go 1.27.4). Build from the exact approved source:
 
 ```sh
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 GOAMD64=v1 \
@@ -48,25 +51,6 @@ sha256sum nstack-linux-amd64 nstack-linux-arm64 > SHA256SUMS
 sha256sum -c SHA256SUMS
 ```
 
-Name the binary for your architecture `nstack`. `nstack --version` prints the distribution version and the embedded asset SHA-256 revision. Use the same explicit Codex home as the Python installer:
+See [release preparation](docs/releases/v0.4.0.md) for reproduction and notices, and the [adapter contract](docs/adapters.md) for quality and delivery boundaries.
 
-```sh
-config_dir="${CODEX_HOME:-$HOME/.codex}"
-revision="$(nstack --version | sed -n 's/.*assets sha256://p')"
-nstack install --home "$config_dir" stage "$revision"
-nstack install --home "$config_dir" activate "$revision"
-```
-
-Staging copies the skills, principles, playbooks, adapter references, docs, example roles and both MIT notices. The embedded plugin manifest identifies the distribution and is not an extra file in the interoperable snapshot. Stage a new ID to upgrade; activate a previous complete snapshot to roll back. Nothing in `agents` is written by the installer.
-
-The binary does not run Python or PyYAML. `review` still needs Git, the Codex CLI and its existing OAuth login, your gate tools, and `gh` if delivering a PR. Managed paths need Linux procfs, flock and atomic rename support; Go staging also requires user extended attributes. Go stores a snapshot checksum on its directory so existing Python file-list comparisons are unchanged. For Python-era snapshots that lack a checksum, activation checks required files, skill metadata, and the presence of skill instructions; it cannot verify historical checksums. Managed directories must be owned by the current user and cannot be writable by others. Both installers share a lock; do not edit managed paths while either runs. A killed process can leave private scratch outside discovery; atomic activation does not establish power-loss durability. Redistribute both project MIT notices and the [TOML](vendor/github.com/BurntSushi/toml/COPYING) and [YAML license](vendor/go.yaml.in/yaml/v3/LICENSE) and [notice](vendor/go.yaml.in/yaml/v3/NOTICE).
-
-### Upgrading and rolling back
-
-Follow the [migration guide](docs/migration.md) before installing into an existing Codex environment. It covers direct and plugin installations, preservation of customized model settings, and rollback.
-
-The default role examples use Sol for implementation and defensive work and Astra for review. You can edit the installed role TOMLs independently. Daybreak Blue is opt-in. Follow repository authorization for branch delivery and obtain explicit approval for release publication and merging. [Harness adapter contract](docs/adapters.md).
-
-[Skill reference, routing, and plugin installation](docs/skills.md) · [Codex compatibility](docs/codex.md) · [Upstream provenance](docs/upstream.md) · [MIT](LICENSE) · [Upstream MIT](LICENSE-upstream)
-
-[v0.3.0 commands and release notes](docs/v0.3.0.md)
+[Skills](docs/skills.md) · [Upstream provenance](docs/upstream.md) · [MIT](LICENSE) · [Upstream MIT](LICENSE-upstream) · [v0.3.0 reference](docs/v0.3.0.md)

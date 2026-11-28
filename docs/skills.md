@@ -4,7 +4,7 @@
 
 ## Choose a skill
 
-Start with `$natori-mode` when you have an outcome but need help choosing a workflow. Codex reads the request, repository instructions, worktree state, and existing checks, then defines an acceptance check and reads only the applicable playbook. Bug fixes, features, and refactors have dedicated playbooks. Investigation stays read-only, and design uncertainty routes to `$architect`. The router can draw on narrower skills or principles as needed. This routing happens within an explicitly started session. The distributed skills have implicit invocation disabled.
+Start with `natori-mode` when you have an outcome but need help choosing a workflow. The host reads the request, repository instructions, worktree state, and existing checks, then defines an acceptance check and reads only the applicable playbook. Use `$name` in Codex and `@name` in [OpenCode](opencode.md). Bug fixes, features, and refactors have dedicated playbooks. Investigation stays read-only, and design uncertainty routes to `architect`. The router can draw on narrower skills or principles as needed.
 
 For a specific job, invoke its skill directly.
 
@@ -56,13 +56,13 @@ These are decision aids. Apply the relevant principle during a task and use the 
 | [principle-guard-the-context-window](../skills/principle-guard-the-context-window/SKILL.md) | Large reads, tool outputs, or fan-out planning. | Set file and turn limits per phase. Keep summaries in the main thread when delegating bulk work. |
 | [principle-encode-lessons-in-structure](../skills/principle-encode-lessons-in-structure/SKILL.md) | An instruction or correction keeps recurring. | Encode an enforceable rule once. For a judgment call, highlight the instruction and give an example. |
 
-## Models, isolation, and publication
+## Codex models, isolation, and publication
 
 The [example TOMLs](../examples/agents/) use `nstack_implement` with Sol, `nstack_security` with Sol for authorized defensive work, and `nstack_review` with Astra. Configure model and reasoning effort in the installed TOMLs, and subagent concurrency through Codex’s `[agents]` settings. Independently launched CLI sessions need an operator-set limit. Daybreak requires approved access and the appropriate program selection. Stop if a mandatory model is unavailable. Use a read-only parent for the review agent or launch a separate read-only session. Consult the [Codex adapter](codex.md) for access and sandbox details.
 
 Give each concurrent writer a separate branch, worktree, and Codex session. Worktree paths alone provide no write restrictions. Check the effective sandbox and leave sibling worktrees out of the writable scope. Apply repository authorization for routine GitHub delivery. Release publication and merging require explicit operator authorization. Cursor Cloud, Bugbot, and Cursor Automations are outside the adapter’s scope.
 
-## Other installation options
+## Other Codex installation options
 
 For project scope, place skills under `.agents/skills/`, agent TOMLs under `.codex/agents/`, and both MIT notices at the project root under prefixed names.
 

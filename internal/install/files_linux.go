@@ -79,7 +79,7 @@ func createHome(path string) (directory, error) {
 			next, err = syscall.Openat(fd, part, flags, 0)
 		}
 		if err != nil {
-			return directory{}, fmt.Errorf("open resolved Codex home %s: %w", path, err)
+			return directory{}, fmt.Errorf("open resolved harness home %s: %w", path, err)
 		}
 		_ = syscall.Close(fd)
 		fd = next

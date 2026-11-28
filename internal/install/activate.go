@@ -121,7 +121,7 @@ func snapshotNames(skills directory) (map[string]bool, error) {
 
 // Existing directory symlinks participate in Codex discovery. Follow them
 // only for read-only duplicate checks, using the directory inode to stop cycles.
-func checkCollisions(skills directory, names map[string]bool) error {
+func checkCollisions(skills directory, names map[string]bool, flatSkills bool) error {
 	type inode struct{ dev, ino uint64 }
 	visited := make(map[inode]bool)
 	var visit func(path string, top bool) error
@@ -158,6 +158,16 @@ func checkCollisions(skills directory, names map[string]bool) error {
 				continue
 			}
 			child := filepath.Join(path, name)
+			if top && flatSkills && !strings.HasPrefix(name, ".") &&
+				strings.HasSuffix(name, ".md") && names[strings.TrimSuffix(name, ".md")] {
+				info, err := os.Stat(child)
+				if err != nil && !errors.Is(err, fs.ErrNotExist) {
+					return err
+				}
+				if err == nil && info.Mode().IsRegular() {
+					return fmt.Errorf("move existing skill out of discovery first: %s", child)
+				}
+			}
 			if name == "SKILL.md" {
 				continue
 			}
@@ -183,7 +193,7 @@ func checkCollisions(skills directory, names map[string]bool) error {
 	return visit(skills.path("."), true)
 }
 
-func activate(state, skills directory, snapshotsPath, id string, names map[string]bool, check func() error, observe checkpoint) error {
+func activate(state, skills directory, snapshotsPath, id string, names map[string]bool, check func() error, observe checkpoint, flatSkills bool) error {
 	current := skills.path(activeLink)
 	previous, err := os.Lstat(current)
 	var target string
@@ -203,7 +213,7 @@ func activate(state, skills directory, snapshotsPath, id string, names map[strin
 			return errors.New("unmanaged skill path: nstack-managed")
 		}
 	}
-	if err := checkCollisions(skills, names); err != nil {
+	if err := checkCollisions(skills, names, flatSkills); err != nil {
 		return err
 	}
 	next := filepath.Join(snapshotsPath, id, "skills")

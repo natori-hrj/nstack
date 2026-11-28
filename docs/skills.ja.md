@@ -4,7 +4,7 @@
 
 ## タスクに合うスキルを選ぶ
 
-達成したい結果があり、進め方の選択を任せたいときは `$natori-mode` を明示的に呼び出します。Codex は依頼、リポジトリの指示、worktree の状態、既存の検証手段を確認し、受け入れチェックを決めて該当するプレイブックだけを読みます。バグ修正、機能追加、リファクタリングには専用のプレイブックがあります。調査は読み取り専用で進め、設計上の不確実性には `$architect` を使います。必要に応じて個別スキルや原則を参照します。自動振り分けは明示的な呼び出しの中で行われ、配布スキルの暗黙呼び出しは無効です。
+達成したい結果があり、進め方の選択を任せたいときは `natori-mode` を呼び出します。Codex では `$名前`、[OpenCode](opencode.ja.md) では `@名前` を使います。ハーネスは依頼、リポジトリの指示、worktree、既存のチェックを確認し、受け入れ条件に合うプレイブックを読みます。調査は読み取り専用で進め、設計上の不確実性には `architect` を使います。
 
 - **不具合を証明・修正する** — 公開インターフェースで失敗を確認するなら `$tdd`、誤りが判明した主張を訂正するなら `$correct`、差分を独立検証するなら `$interrogate`。
 - **変更を理解する** — 影響する契約は `$blast-radius`、設計判断は `$architect`、繰り返す教訓の定着は `$reflect`。
@@ -52,13 +52,13 @@
 | [principle-guard-the-context-window](../skills/principle-guard-the-context-window/SKILL.md) | 大量の読み込み、出力、作業分割。 | 段階ごとにファイル数やターン数を制限する。大量の作業を委任した場合は主スレッドに要約を残す。 |
 | [principle-encode-lessons-in-structure](../skills/principle-encode-lessons-in-structure/SKILL.md) | 指示や訂正が繰り返される。 | 強制できるルールは構造に組み込む。判断が必要なら指示を目立たせ、例を添える。 |
 
-## モデル・隔離・公開権限
+## Codex のモデル・隔離・公開権限
 
 [設定例](../examples/agents/)では `nstack_implement` に Sol、許可された防御作業を担当する `nstack_security` に Sol、`nstack_review` に Astra を割り当てます。モデルと推論強度は配置先の TOML、サブエージェント数は Codex の `[agents]` で設定します。独立して起動する CLI セッション数は運用者が制限します。Daybreak には承認済みアクセスと適切なプログラム指定が必要です。必須モデルが利用できなければ作業を止めます。独立レビューは読み取り専用の親か別の読み取り専用セッションで行います。[Codex アダプター](codex.ja.md)
 
 並行する書き込み担当には別ブランチ、別 worktree、別 Codex セッションを割り当てます。実効サンドボックスを確認し、兄弟 worktree を書き込み範囲に含めないでください。通常の GitHub 納品はリポジトリの権限に従います。リリース公開とマージは明示的な許可を得ます。Cursor Cloud、Bugbot、Cursor Automations はアダプターの対象外です。
 
-## その他のインストール方法
+## その他の Codex インストール方法
 
 プロジェクト限定の場合は、スキルを `.agents/skills/`、エージェント TOML を `.codex/agents/`、両方の MIT 通知を名前に `nstack-` を付けてプロジェクトルートに配置します。
 
@@ -81,4 +81,4 @@ codex plugin marketplace add /ローカルマーケットプレイスの絶対�
 codex plugin add nstack@nstack-local
 ```
 
-プラグインのスキルには名前空間が付きます。スキル選択画面で `$nstack:natori-mode` や `$nstack:setup-nstack` を選びます。カスタムエージェント TOML は[クイックスタート](../README.ja.md)の手順で別途配置します。
+プラグインのスキルには名前空間が付きます。スキル選択画面で `$nstack:natori-mode` や `$nstack:setup-nstack` を選びます。カスタムエージェント TOML は [Codex ガイド](codex.ja.md)の手順で別途配置します。

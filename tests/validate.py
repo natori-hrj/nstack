@@ -46,7 +46,7 @@ def verify_catalog():
 
 def verify_codex_catalog():
     manifest = json.loads((ROOT / ".codex-plugin/plugin.json").read_text())
-    assert manifest["name"] == "nstack" and manifest["version"] == "0.3.0"
+    assert manifest["name"] == "nstack" and manifest["version"] == "0.4.0"
     assert (ROOT / manifest["skills"]).resolve() == ROOT / "skills"
     assert {path.stem for path in (ROOT / "examples/agents").glob("*.toml")} == {
         "nstack_implement", "nstack_security", "nstack_review",
@@ -102,10 +102,12 @@ def verify_discovery(repo, home, snapshot, names):
 def verify_readme_install_stops(directory):
     bin_dir = directory / "install-stub"
     bin_dir.mkdir()
-    python = bin_dir / "python3"
-    python.write_text('#!/bin/sh\nprintf "%s\\n" "$4" >> "$INSTALL_TRACE"\n'
+    binary = bin_dir / "nstack"
+    binary.write_text('#!/bin/sh\n'
+                      'if [ "$1" = "--version" ]; then printf "%s\\n" "nstack 0.4.0 assets sha256:fixture"; exit 0; fi\n'
+                      'printf "%s\\n" "$4" >> "$INSTALL_TRACE"\n'
                       '[ "$4" != "$FAIL_INSTALL_STEP" ] || exit 17\n')
-    python.chmod(0o700)
+    binary.chmod(0o700)
     trace = directory / "install.trace"
     for readme in ("README.md", "README.ja.md"):
         block = (ROOT / readme).read_text().split("```sh\n", 1)[1].split("```", 1)[0]

@@ -2,6 +2,8 @@
 
 [日本語](codex.ja.md)
 
+Install the skills with the [Go binary](../README.md#install-from-the-single-binary). To set up custom roles, copy the necessary TOMLs from the staged snapshot's `examples/agents/` to `${CODEX_HOME:-$HOME/.codex}/agents/` only if the destination file and symlink are absent. Model and reasoning effort are user settings; edit existing role files only by choice.
+
 | Upstream mechanism | Codex equivalent |
 |---|---|
 | Skills | Invoke `$name` explicitly. Workflows load the specific skills and playbooks they need. |
