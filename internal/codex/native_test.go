@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/natori-hrj/nstack/internal/install"
 	"github.com/natori-hrj/nstack/internal/workflow"
 )
 
@@ -33,7 +35,9 @@ func TestNativeOffline(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("CODEX_HOME", home)
 	t.Setenv("HOME", home)
-	const config = "[mcp_servers.\"fixture.with.dot\"]\ncommand = \"false\"\n"
+	const config = "[mcp_servers.tool]\ncommand = \"false\"\n" +
+		"[mcp_servers.\"fixture.with.dot\"]\ncommand = \"false\"\n" +
+		"[mcp_servers.disabled]\ncommand = \"false\"\nenabled = false\n"
 	path := filepath.Join(home, "config.toml")
 	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
 		t.Fatal(err)
@@ -46,7 +50,7 @@ func TestNativeOffline(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.close()
-	if disabled != 1 {
+	if disabled != 2 {
 		t.Fatalf("disabled MCP servers = %d, want 1", disabled)
 	}
 	if err := s.verifyOAuth(); err == nil || !strings.Contains(err.Error(), "no authenticated account") {
@@ -74,6 +78,74 @@ func TestNativeOffline(t *testing.T) {
 		t.Fatal("native configuration changed during discovery")
 	}
 	t.Logf("native config, no OAuth, read-only denial (%s), and confined workspace scratch verified", proof)
+}
+
+func TestNativeOfflineDiscovery(t *testing.T) {
+	requireNative(t, "offline")
+	home, cwd := t.TempDir(), t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	evidence := t.TempDir()
+	installCLI := func(action, id string) {
+		t.Helper()
+		if code := install.RunCLI([]string{"--home", home, action, id}, os.Stdout, os.Stderr); code != 0 {
+			t.Fatalf("install %s %s: %d", action, id, code)
+		}
+	}
+	installCLI("stage", "first")
+	installCLI("stage", "second")
+	for i, id := range []string{"first", "second", "first"} {
+		installCLI("activate", id)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		s, err := startServer(ctx, cwd, filepath.Join(evidence, fmt.Sprintf("discover-%d", i)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var list struct {
+			Data []struct {
+				Skills []struct {
+					Enabled bool   `json:"enabled"`
+					Name    string `json:"name"`
+					Path    string `json:"path"`
+				} `json:"skills"`
+			} `json:"data"`
+		}
+		err = s.request("skills/list", object{"cwds": []string{cwd}}, &list, nil)
+		s.close()
+		if err != nil {
+			t.Fatal(err)
+		}
+		skills := filepath.Join(home, "nstack", "snapshots", id, "skills")
+		expected, err := fs.Glob(os.DirFS(skills), "*/SKILL.md")
+		if err != nil || len(expected) != 26 {
+			t.Fatalf("installed catalog size=%d: %v", len(expected), err)
+		}
+		found := map[string][]string{}
+		for _, group := range list.Data {
+			for _, skill := range group.Skills {
+				if skill.Enabled {
+					resolved, err := filepath.EvalSymlinks(skill.Path)
+					if err != nil {
+						t.Fatal(err)
+					}
+					found[skill.Name] = append(found[skill.Name], resolved)
+				}
+			}
+		}
+		for _, path := range expected {
+			name := filepath.Dir(path)
+			if paths := found[name]; len(paths) != 1 || paths[0] != filepath.Join(skills, path) {
+				t.Errorf("%s: %s resolved to %v", id, name, paths)
+			}
+		}
+		for _, old := range []string{"poteto-mode", "setup-pstack"} {
+			if len(found[old]) != 0 {
+				t.Errorf("legacy skill %s was discovered", old)
+			}
+		}
+	}
 }
 
 func TestNativeOAuth(t *testing.T) {

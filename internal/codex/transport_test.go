@@ -3,6 +3,7 @@ package codex
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -58,18 +59,11 @@ func assertStopped(t *testing.T, pid int) {
 }
 
 func TestTurnTeardown(t *testing.T) {
-	fixture, err := os.ReadFile("../../tests/fixtures/review_app_server.py")
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin, home := t.TempDir(), t.TempDir()
-	if err := os.WriteFile(filepath.Join(bin, "codex"), fixture, 0700); err != nil {
-		t.Fatal(err)
-	}
+	installProtocolDouble(t)
+	home := t.TempDir()
 	if err := os.WriteFile(filepath.Join(home, "config.toml"), nil, 0600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("CODEX_HOME", home)
 	for _, test := range []struct {
 		name, scenario string
@@ -116,4 +110,35 @@ func TestTurnTeardown(t *testing.T) {
 			assertStopped(t, pid)
 		})
 	}
+}
+
+func TestCancelledGateStopsChild(t *testing.T) {
+	installProtocolDouble(t)
+	home, checkout, scratch := t.TempDir(), t.TempDir(), t.TempDir()
+	t.Setenv("CODEX_HOME", home)
+	fixtureWrite(filepath.Join(home, "config.toml"), "")
+	pidFile := filepath.Join(scratch, "pid")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	a := &Adapter{timeout: 10 * time.Second}
+	done := make(chan error, 1)
+	go func() {
+		result, err := a.Gate(ctx, workflow.GateRequest{
+			Directory: checkout, Scratch: scratch, Evidence: filepath.Join(scratch, "gate"),
+			Argv: []string{"/bin/sh", "-c", `printf '%s\n' "$$" > "$1"; exec /bin/sleep 30`, "gate", pidFile},
+		})
+		if err == nil && result.ExitCode != nil {
+			err = fmt.Errorf("cancelled gate returned terminal code %d", *result.ExitCode)
+		}
+		done <- err
+	}()
+	pid, err := waitForPID(ctx, pidFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancellation was not preserved: %v", err)
+	}
+	assertStopped(t, pid)
 }
